@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Temp
+tmp/
+temp/
+.tmp/
+
+# Local package artifacts
+*.tgz
+
+# Runtime data
+.memory/
+*.db
+*.sqlite
+*.sqlite3

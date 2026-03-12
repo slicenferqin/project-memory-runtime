@@ -1,0 +1,13 @@
+{
+  "name": "project-memory-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-first lifecycle memory runtime for coding agents",
+  "type": "module",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "build": "echo \"Build pipeline pending\"",
+    "test": "echo \"Test pipeline pending\"",
+    "lint": "echo \"Lint pipeline pending\""
+  }
+}
