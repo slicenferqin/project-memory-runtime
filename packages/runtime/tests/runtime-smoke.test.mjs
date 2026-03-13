@@ -9,6 +9,7 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
   const { ProjectMemoryRuntime } = await import("../dist/index.js");
 
   const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
   runtime.initialize();
 
   runtime.recordEvent({
@@ -21,7 +22,7 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
     content: "Session started",
   });
 
-  runtime.insertClaimRecord({
+  admin.insertClaimRecord({
     id: "clm-1",
     created_at: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -38,7 +39,7 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
     status: "active",
   });
 
-  runtime.insertOutcomeRecord({
+  admin.insertOutcomeRecord({
     id: "out-1",
     ts: "2026-03-12T00:00:01.000Z",
     project_id: "github.com/acme/demo",
@@ -163,9 +164,10 @@ test("runtime applies positive and negative outcomes to claim lifecycle", async 
   const { ProjectMemoryRuntime } = await import("../dist/index.js");
 
   const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
   runtime.initialize();
 
-  runtime.insertClaimRecord({
+  admin.insertClaimRecord({
     id: "clm-decision",
     created_at: "2026-03-01T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -182,7 +184,7 @@ test("runtime applies positive and negative outcomes to claim lifecycle", async 
     status: "active",
   });
 
-  runtime.insertOutcomeRecord({
+  admin.insertOutcomeRecord({
     id: "out-negative",
     ts: "2026-03-02T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -197,7 +199,7 @@ test("runtime applies positive and negative outcomes to claim lifecycle", async 
   assert.equal(claim.status, "stale");
   assert.ok(claim.outcome_score < 0);
 
-  runtime.insertOutcomeRecord({
+  admin.insertOutcomeRecord({
     id: "out-positive",
     ts: "2026-03-03T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -224,9 +226,10 @@ test("runtime sweeps stale claims using last_verified_at or created_at", async (
   const { ProjectMemoryRuntime } = await import("../dist/index.js");
 
   const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
   runtime.initialize();
 
-  runtime.insertClaimRecord({
+  admin.insertClaimRecord({
     id: "clm-fact-old",
     created_at: "2025-01-01T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -243,7 +246,7 @@ test("runtime sweeps stale claims using last_verified_at or created_at", async (
     status: "active",
   });
 
-  runtime.insertClaimRecord({
+  admin.insertClaimRecord({
     id: "clm-decision-recent",
     created_at: "2025-01-01T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -280,9 +283,10 @@ test("runtime builds session brief and search results with activation logs", asy
   const { ProjectMemoryRuntime } = await import("../dist/index.js");
 
   const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
   runtime.initialize();
 
-  runtime.insertClaimRecord({
+  admin.insertClaimRecord({
     id: "clm-fact",
     created_at: "2026-03-01T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -299,7 +303,7 @@ test("runtime builds session brief and search results with activation logs", asy
     status: "active",
   });
 
-  runtime.insertClaimRecord({
+  admin.insertClaimRecord({
     id: "clm-thread-open",
     created_at: "2026-03-02T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -320,7 +324,7 @@ test("runtime builds session brief and search results with activation logs", asy
     },
   });
 
-  runtime.insertClaimRecord({
+  admin.insertClaimRecord({
     id: "clm-thread-resolved",
     created_at: "2026-03-02T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -339,7 +343,7 @@ test("runtime builds session brief and search results with activation logs", asy
     resolved_at: "2026-03-03T00:00:00.000Z",
   });
 
-  runtime.insertClaimRecord({
+  admin.insertClaimRecord({
     id: "clm-stale",
     created_at: "2026-01-01T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -401,6 +405,118 @@ test("runtime builds session brief and search results with activation logs", asy
   assert.ok(
     activationLogs.some((log) => log.suppression_reason === "archived" || log.suppression_reason === "token_budget")
   );
+
+  runtime.close();
+});
+
+test("runtime resolves failing test thread when matching test passes", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-thread-resolution-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+
+  runtime.recordEvent({
+    id: "evt-test-fail",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "test_result",
+    content: "Test run failed",
+    scope: { branch: "fix/windows-install" },
+    metadata: {
+      exit_code: 1,
+      failing_test: "Windows install path normalizer",
+    },
+  });
+
+  let thread = runtime
+    .listClaims("github.com/acme/demo")
+    .find((claim) => claim.canonical_key === "thread.test.windows.install.path.normalizer");
+  assert.equal(thread?.status, "active");
+  assert.equal(thread?.thread_status, "open");
+
+  runtime.recordEvent({
+    id: "evt-test-pass",
+    ts: "2026-03-12T00:00:10.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "test_result",
+    content: "Test run passed",
+    scope: { branch: "fix/windows-install" },
+    metadata: {
+      exit_code: 0,
+      failing_test: "Windows install path normalizer",
+    },
+  });
+
+  thread = runtime
+    .listClaims("github.com/acme/demo")
+    .find((claim) => claim.canonical_key === "thread.test.windows.install.path.normalizer");
+  assert.equal(thread?.status, "archived");
+  assert.equal(thread?.thread_status, "resolved");
+  assert.equal(thread?.resolved_at, "2026-03-12T00:00:10.000Z");
+
+  const transitions = runtime.listClaimTransitions("github.com/acme/demo");
+  assert.ok(transitions.some((entry) => entry.to_status === "archived"));
+
+  runtime.close();
+});
+
+test("runtime enforces active singleton invariant for compatible scopes", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-scope-invariant-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
+  runtime.initialize();
+
+  admin.insertClaimRecord({
+    id: "clm-branch-main",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.persistence.backend",
+    cardinality: "singleton",
+    content: "Use SQLite backend on main",
+    source_event_ids: ["evt-branch-main"],
+    confidence: 0.9,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "user_confirmed",
+    status: "active",
+    scope: { branch: "main" },
+  });
+
+  assert.throws(() =>
+    admin.insertClaimRecord({
+      id: "clm-repo-branch-main",
+      created_at: "2026-03-12T00:01:00.000Z",
+      project_id: "github.com/acme/demo",
+      type: "decision",
+      assertion_kind: "instruction",
+      canonical_key: "decision.persistence.backend",
+      cardinality: "singleton",
+      content: "Use Postgres backend on main",
+      source_event_ids: ["evt-repo-branch-main"],
+      confidence: 0.9,
+      importance: 0.8,
+      outcome_score: 0,
+      verification_status: "user_confirmed",
+      status: "active",
+      scope: { repo: "origin", branch: "main" },
+    })
+  );
+
+  const activeClaims = runtime
+    .listClaims("github.com/acme/demo")
+    .filter(
+      (claim) =>
+        claim.canonical_key === "decision.persistence.backend" && claim.status === "active"
+    );
+  assert.equal(activeClaims.length, 1);
 
   runtime.close();
 });

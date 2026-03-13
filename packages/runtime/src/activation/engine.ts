@@ -6,6 +6,7 @@ import type {
   RecallClaim,
   SuppressionReason,
 } from "../types.js";
+import { normalizeClaimScope } from "../scope.js";
 
 const DEFAULT_WEIGHTS = {
   relevance: 0.1,
@@ -22,18 +23,6 @@ const FRESHNESS_LAMBDA: Record<Claim["type"], number> = {
   decision: 0.02,
   thread: 0.08,
 };
-
-function normalizeScope(scope?: ClaimScope): ClaimScope | undefined {
-  if (!scope) return undefined;
-
-  const normalized: ClaimScope = {};
-  if (scope.repo) normalized.repo = scope.repo;
-  if (scope.branch) normalized.branch = scope.branch;
-  if (scope.cwd_prefix) normalized.cwd_prefix = scope.cwd_prefix;
-  if (scope.files?.length) normalized.files = [...scope.files].sort();
-
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
-}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -94,8 +83,8 @@ function cwdMatches(claimPrefix: string | undefined, queryPrefix: string | undef
 }
 
 export function scopeCompatible(claimScope?: ClaimScope, requestedScope?: ClaimScope): boolean {
-  const normalizedClaimScope = normalizeScope(claimScope);
-  const normalizedRequestedScope = normalizeScope(requestedScope);
+  const normalizedClaimScope = normalizeClaimScope(claimScope);
+  const normalizedRequestedScope = normalizeClaimScope(requestedScope);
 
   if (!normalizedClaimScope) return true;
   if (!normalizedRequestedScope) return true;
@@ -111,8 +100,8 @@ export function scopeCompatible(claimScope?: ClaimScope, requestedScope?: ClaimS
 }
 
 function computeScopeMatch(claimScope: ClaimScope | undefined, requestedScope: ClaimScope | undefined): number {
-  const normalizedClaimScope = normalizeScope(claimScope);
-  const normalizedRequestedScope = normalizeScope(requestedScope);
+  const normalizedClaimScope = normalizeClaimScope(claimScope);
+  const normalizedRequestedScope = normalizeClaimScope(requestedScope);
 
   if (!normalizedRequestedScope) return normalizedClaimScope ? 0.7 : 1.0;
   if (!normalizedClaimScope) return 0.6;
@@ -135,10 +124,33 @@ function computePinBonus(claim: Claim): number {
   return bonus;
 }
 
-function computeTextRelevance(claim: Claim, query?: string): number {
-  if (!query) return 0.5;
+function computeBaseRelevance(
+  claim: Claim,
+  mode: ActivateClaimsOptions["mode"] = "search"
+): number {
+  if (mode === "session_brief") {
+    if (claim.type === "thread") return claim.status === "stale" ? 0.72 : 0.9;
+    if (claim.type === "decision") return 0.82;
+    return claim.status === "stale" ? 0.45 : 0.62;
+  }
+
+  if (mode === "project_snapshot") {
+    if (claim.type === "thread") return claim.status === "stale" ? 0.7 : 0.84;
+    if (claim.type === "decision") return claim.status === "stale" ? 0.58 : 0.74;
+    return claim.status === "stale" ? 0.52 : 0.66;
+  }
+
+  return 0.5;
+}
+
+function computeTextRelevance(
+  claim: Claim,
+  query: string | undefined,
+  mode: ActivateClaimsOptions["mode"]
+): number {
+  if (!query) return computeBaseRelevance(claim, mode);
   const queryTerms = tokenize(query);
-  if (queryTerms.length === 0) return 0.5;
+  if (queryTerms.length === 0) return computeBaseRelevance(claim, mode);
 
   const haystack = tokenize(
     `${claim.canonical_key} ${claim.content} ${claim.type} ${claim.assertion_kind}`
@@ -203,6 +215,7 @@ export interface ActivateClaimsOptions {
   projectId: string;
   agentId: string;
   claims: Claim[];
+  mode?: "session_brief" | "project_snapshot" | "search";
   scope?: ClaimScope;
   query?: string;
   debug?: boolean;
@@ -241,7 +254,7 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
       continue;
     }
 
-    const relevance = computeTextRelevance(claim, options.query);
+    const relevance = computeTextRelevance(claim, options.query, options.mode);
     const fresh = freshness(claim, now);
     const confidence = claim.confidence;
     const importance = claim.importance;

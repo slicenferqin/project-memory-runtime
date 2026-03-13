@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import {
   type ActivationLog,
   type Claim,
+  type ClaimScope,
   type ClaimTransition,
   type NormalizedEvent,
   type Outcome,
@@ -11,6 +12,7 @@ import {
   type RuntimePaths,
   type RuntimeStats,
 } from "../types.js";
+import { normalizeClaimScope, singletonScopeCompatible } from "../scope.js";
 import { loadSqlMigrations } from "./migrations.js";
 
 function serializeJson(value: unknown): string | null {
@@ -51,6 +53,11 @@ export class RuntimeStorage {
 
   close(): void {
     this.db.close();
+  }
+
+  transact<T>(fn: () => T): T {
+    const tx = this.db.transaction(fn);
+    return tx();
   }
 
   applyMigrations(): number {
@@ -129,6 +136,7 @@ export class RuntimeStorage {
   }
 
   upsertClaim(claim: Claim): void {
+    const normalizedClaim = this.normalizeClaim(claim);
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO claims (
         id, created_at, project_id, type, assertion_kind, canonical_key, cardinality, content,
@@ -143,32 +151,36 @@ export class RuntimeStorage {
       )
     `);
 
-    stmt.run({
-      id: claim.id,
-      created_at: claim.created_at,
-      project_id: claim.project_id,
-      type: claim.type,
-      assertion_kind: claim.assertion_kind,
-      canonical_key: claim.canonical_key,
-      cardinality: claim.cardinality,
-      content: claim.content,
-      source_event_ids_json: serializeJson(claim.source_event_ids),
-      confidence: claim.confidence,
-      importance: claim.importance,
-      outcome_score: claim.outcome_score,
-      verification_status: claim.verification_status,
-      verification_method: nullable(claim.verification_method),
-      status: claim.status,
-      supersedes_json: serializeJson(claim.supersedes),
-      scope_json: serializeJson(claim.scope),
-      resolution_rules_json: serializeJson(claim.resolution_rules),
-      pinned: claim.pinned ? 1 : 0,
-      valid_from: nullable(claim.valid_from),
-      valid_to: nullable(claim.valid_to),
-      last_verified_at: nullable(claim.last_verified_at),
-      last_activated_at: nullable(claim.last_activated_at),
-      thread_status: nullable(claim.thread_status),
-      resolved_at: nullable(claim.resolved_at),
+    this.transact(() => {
+      stmt.run({
+        id: normalizedClaim.id,
+        created_at: normalizedClaim.created_at,
+        project_id: normalizedClaim.project_id,
+        type: normalizedClaim.type,
+        assertion_kind: normalizedClaim.assertion_kind,
+        canonical_key: normalizedClaim.canonical_key,
+        cardinality: normalizedClaim.cardinality,
+        content: normalizedClaim.content,
+        source_event_ids_json: serializeJson(normalizedClaim.source_event_ids),
+        confidence: normalizedClaim.confidence,
+        importance: normalizedClaim.importance,
+        outcome_score: normalizedClaim.outcome_score,
+        verification_status: normalizedClaim.verification_status,
+        verification_method: nullable(normalizedClaim.verification_method),
+        status: normalizedClaim.status,
+        supersedes_json: serializeJson(normalizedClaim.supersedes),
+        scope_json: serializeJson(normalizedClaim.scope),
+        resolution_rules_json: serializeJson(normalizedClaim.resolution_rules),
+        pinned: normalizedClaim.pinned ? 1 : 0,
+        valid_from: nullable(normalizedClaim.valid_from),
+        valid_to: nullable(normalizedClaim.valid_to),
+        last_verified_at: nullable(normalizedClaim.last_verified_at),
+        last_activated_at: nullable(normalizedClaim.last_activated_at),
+        thread_status: nullable(normalizedClaim.thread_status),
+        resolved_at: nullable(normalizedClaim.resolved_at),
+      });
+
+      this.assertActiveSingletonInvariant(normalizedClaim);
     });
   }
 
@@ -229,35 +241,7 @@ export class RuntimeStorage {
           .all(projectId) as any[])
       : (this.db.prepare("SELECT * FROM claims ORDER BY created_at ASC").all() as any[]);
 
-    return rows.map((row) => ({
-      id: row.id,
-      created_at: row.created_at,
-      project_id: row.project_id,
-      type: row.type,
-      assertion_kind: row.assertion_kind,
-      canonical_key: row.canonical_key,
-      cardinality: row.cardinality,
-      content: row.content,
-      source_event_ids: JSON.parse(row.source_event_ids_json),
-      confidence: row.confidence,
-      importance: row.importance,
-      outcome_score: row.outcome_score,
-      verification_status: row.verification_status,
-      verification_method: row.verification_method ?? undefined,
-      status: row.status,
-      pinned: Boolean(row.pinned),
-      valid_from: row.valid_from ?? undefined,
-      valid_to: row.valid_to ?? undefined,
-      supersedes: row.supersedes_json ? JSON.parse(row.supersedes_json) : undefined,
-      last_verified_at: row.last_verified_at ?? undefined,
-      last_activated_at: row.last_activated_at ?? undefined,
-      scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
-      thread_status: row.thread_status ?? undefined,
-      resolved_at: row.resolved_at ?? undefined,
-      resolution_rules: row.resolution_rules_json
-        ? JSON.parse(row.resolution_rules_json)
-        : undefined,
-    }));
+    return rows.map((row) => this.mapClaimRow(row));
   }
 
   listOutcomes(projectId?: string): Outcome[] {
@@ -284,38 +268,15 @@ export class RuntimeStorage {
   getClaimById(claimId: string): Claim | undefined {
     const row = this.db.prepare("SELECT * FROM claims WHERE id = ?").get(claimId) as any;
     if (!row) return undefined;
-    return {
-      id: row.id,
-      created_at: row.created_at,
-      project_id: row.project_id,
-      type: row.type,
-      assertion_kind: row.assertion_kind,
-      canonical_key: row.canonical_key,
-      cardinality: row.cardinality,
-      content: row.content,
-      source_event_ids: JSON.parse(row.source_event_ids_json),
-      confidence: row.confidence,
-      importance: row.importance,
-      outcome_score: row.outcome_score,
-      verification_status: row.verification_status,
-      verification_method: row.verification_method ?? undefined,
-      status: row.status,
-      pinned: Boolean(row.pinned),
-      valid_from: row.valid_from ?? undefined,
-      valid_to: row.valid_to ?? undefined,
-      supersedes: row.supersedes_json ? JSON.parse(row.supersedes_json) : undefined,
-      last_verified_at: row.last_verified_at ?? undefined,
-      last_activated_at: row.last_activated_at ?? undefined,
-      scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
-      thread_status: row.thread_status ?? undefined,
-      resolved_at: row.resolved_at ?? undefined,
-      resolution_rules: row.resolution_rules_json
-        ? JSON.parse(row.resolution_rules_json)
-        : undefined,
-    };
+    return this.mapClaimRow(row);
   }
 
-  findActiveSingletonClaims(projectId: string, canonicalKey: string, scopeJson: string | null): Claim[] {
+  findCompatibleActiveSingletonClaims(
+    projectId: string,
+    canonicalKey: string,
+    scope: ClaimScope | undefined,
+    excludeClaimId?: string
+  ): Claim[] {
     const rows = this.db
       .prepare(`
         SELECT * FROM claims
@@ -323,43 +284,16 @@ export class RuntimeStorage {
           AND canonical_key = ?
           AND cardinality = 'singleton'
           AND status = 'active'
-          AND (
-            (scope_json IS NULL AND ? IS NULL)
-            OR scope_json = ?
-          )
         ORDER BY created_at ASC
       `)
-      .all(projectId, canonicalKey, scopeJson, scopeJson) as any[];
+      .all(projectId, canonicalKey) as any[];
 
-    return rows.map((row) => ({
-      id: row.id,
-      created_at: row.created_at,
-      project_id: row.project_id,
-      type: row.type,
-      assertion_kind: row.assertion_kind,
-      canonical_key: row.canonical_key,
-      cardinality: row.cardinality,
-      content: row.content,
-      source_event_ids: JSON.parse(row.source_event_ids_json),
-      confidence: row.confidence,
-      importance: row.importance,
-      outcome_score: row.outcome_score,
-      verification_status: row.verification_status,
-      verification_method: row.verification_method ?? undefined,
-      status: row.status,
-      pinned: Boolean(row.pinned),
-      valid_from: row.valid_from ?? undefined,
-      valid_to: row.valid_to ?? undefined,
-      supersedes: row.supersedes_json ? JSON.parse(row.supersedes_json) : undefined,
-      last_verified_at: row.last_verified_at ?? undefined,
-      last_activated_at: row.last_activated_at ?? undefined,
-      scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
-      thread_status: row.thread_status ?? undefined,
-      resolved_at: row.resolved_at ?? undefined,
-      resolution_rules: row.resolution_rules_json
-        ? JSON.parse(row.resolution_rules_json)
-        : undefined,
-    }));
+    return rows
+      .map((row) => this.mapClaimRow(row))
+      .filter(
+        (claim) =>
+          claim.id !== excludeClaimId && singletonScopeCompatible(claim.scope, scope)
+      );
   }
 
   supersedeClaim(oldClaimId: string, newClaimId: string, reason: string, triggerType: string, actor: string): void {
@@ -497,6 +431,61 @@ export class RuntimeStorage {
       transitions: count("claim_transitions"),
       activationLogs: count("activation_logs"),
       migrationsApplied: count("schema_migrations"),
+    };
+  }
+
+  private normalizeClaim(claim: Claim): Claim {
+    return {
+      ...claim,
+      scope: normalizeClaimScope(claim.scope),
+    };
+  }
+
+  private assertActiveSingletonInvariant(claim: Claim): void {
+    if (claim.cardinality !== "singleton" || claim.status !== "active") return;
+
+    const conflicts = this.findCompatibleActiveSingletonClaims(
+      claim.project_id,
+      claim.canonical_key,
+      claim.scope,
+      claim.id
+    );
+    if (conflicts.length === 0) return;
+
+    throw new Error(
+      `active singleton invariant violated for ${claim.project_id}:${claim.canonical_key}`
+    );
+  }
+
+  private mapClaimRow(row: any): Claim {
+    return {
+      id: row.id,
+      created_at: row.created_at,
+      project_id: row.project_id,
+      type: row.type,
+      assertion_kind: row.assertion_kind,
+      canonical_key: row.canonical_key,
+      cardinality: row.cardinality,
+      content: row.content,
+      source_event_ids: JSON.parse(row.source_event_ids_json),
+      confidence: row.confidence,
+      importance: row.importance,
+      outcome_score: row.outcome_score,
+      verification_status: row.verification_status,
+      verification_method: row.verification_method ?? undefined,
+      status: row.status,
+      pinned: Boolean(row.pinned),
+      valid_from: row.valid_from ?? undefined,
+      valid_to: row.valid_to ?? undefined,
+      supersedes: row.supersedes_json ? JSON.parse(row.supersedes_json) : undefined,
+      last_verified_at: row.last_verified_at ?? undefined,
+      last_activated_at: row.last_activated_at ?? undefined,
+      scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
+      thread_status: row.thread_status ?? undefined,
+      resolved_at: row.resolved_at ?? undefined,
+      resolution_rules: row.resolution_rules_json
+        ? JSON.parse(row.resolution_rules_json)
+        : undefined,
     };
   }
 }

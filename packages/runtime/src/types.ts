@@ -85,11 +85,17 @@ export interface ResolutionRuleCommitContains {
   pattern: string;
 }
 
+export interface ResolutionRuleTestPass {
+  type: "test_pass";
+  test_name: string;
+}
+
 export type ResolutionRule =
   | ResolutionRuleIssueClosed
   | ResolutionRulePrMerged
   | ResolutionRuleBranchDeleted
-  | ResolutionRuleCommitContains;
+  | ResolutionRuleCommitContains
+  | ResolutionRuleTestPass;
 
 export interface Claim {
   id: string;
@@ -242,4 +248,9 @@ export interface RuntimeStats {
   transitions: number;
   activationLogs: number;
   migrationsApplied: number;
+}
+
+export interface RuntimeAdminApi {
+  insertClaimRecord(claim: Claim): void;
+  insertOutcomeRecord(outcome: Outcome): void;
 }

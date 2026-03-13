@@ -8,7 +8,8 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "build": "pnpm --filter @slicenferqin/project-memory-runtime-core build",
-    "test": "pnpm --filter @slicenferqin/project-memory-runtime-core test",
+    "test": "pnpm run typecheck && pnpm --filter @slicenferqin/project-memory-runtime-core test",
+    "typecheck": "pnpm --filter @slicenferqin/project-memory-runtime-core typecheck",
     "lint": "echo \"Lint pipeline pending\""
   },
   "devDependencies": {

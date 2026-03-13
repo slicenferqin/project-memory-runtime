@@ -20,7 +20,8 @@
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.json && node ./scripts/copy-sql-assets.mjs",
     "clean": "rm -rf dist",
-    "test": "pnpm run build && node --test tests/runtime-smoke.test.mjs"
+    "test": "pnpm run build && node --test tests/runtime-smoke.test.mjs",
+    "typecheck": "pnpm exec tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0"

@@ -78,6 +78,7 @@ export function buildRecallPacket(
   const openThreadsResult = activateClaims(
     {
       ...baseOptions,
+      mode: input.mode,
       query: input.query,
       maxItems: input.mode === "project_snapshot" ? 8 : 4,
       includeResolvedThreads: false,
@@ -89,6 +90,7 @@ export function buildRecallPacket(
   const activeClaimsResult = activateClaims(
     {
       ...baseOptions,
+      mode: input.mode,
       query: input.query,
       maxItems: input.mode === "project_snapshot" ? 12 : input.mode === "search" ? 10 : 8,
       includeResolvedThreads: false,

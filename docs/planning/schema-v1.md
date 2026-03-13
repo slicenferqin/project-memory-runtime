@@ -201,6 +201,7 @@ type ThreadClaimExtension = {
     | { type: "pr_merged"; pr_id: string }
     | { type: "branch_deleted"; branch: string }
     | { type: "commit_contains"; pattern: string }
+    | { type: "test_pass"; test_name: string }
   >
 }
 ```

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Claim, ClaimScope, NormalizedEvent, Outcome, ResolutionRule } from "../types.js";
+import { normalizeClaimScope } from "../scope.js";
 
 interface MemoryHints {
   canonical_key_hint?: string;
@@ -22,13 +23,7 @@ function slugify(value: string): string {
 }
 
 function normalizeScope(scope?: ClaimScope): ClaimScope | undefined {
-  if (!scope) return undefined;
-  const normalized: ClaimScope = {};
-  if (scope.repo) normalized.repo = scope.repo;
-  if (scope.branch) normalized.branch = scope.branch;
-  if (scope.cwd_prefix) normalized.cwd_prefix = scope.cwd_prefix;
-  if (scope.files?.length) normalized.files = [...scope.files].sort();
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
+  return normalizeClaimScope(scope);
 }
 
 function eventScopeToClaimScope(event: NormalizedEvent): ClaimScope | undefined {
@@ -139,11 +134,11 @@ function extractIssueId(event: NormalizedEvent): string | undefined {
 }
 
 function extractFailingTest(event: NormalizedEvent): string | undefined {
-  const failingTest = asString(event.metadata?.failing_test);
-  if (failingTest) return failingTest;
   if (event.event_type !== "test_result") return undefined;
   const exitCode = event.metadata?.exit_code;
   if (typeof exitCode === "number" && exitCode === 0) return undefined;
+  const failingTest = asString(event.metadata?.failing_test);
+  if (failingTest) return failingTest;
   return undefined;
 }
 
@@ -224,6 +219,7 @@ function buildFailingTestThread(event: NormalizedEvent, failingTest: string): Cl
     importance: 0.85,
     confidence: 0.95,
     threadStatus: "open",
+    resolutionRules: [{ type: "test_pass", test_name: failingTest } satisfies ResolutionRule],
   });
 }
 

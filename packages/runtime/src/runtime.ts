@@ -2,7 +2,6 @@ import { RuntimeStorage } from "./storage/sqlite.js";
 import type {
   ActivationLog,
   Claim,
-  ClaimScope,
   ClaimStatus,
   ClaimTransition,
   NormalizedEvent,
@@ -11,6 +10,7 @@ import type {
   ProjectSnapshotInput,
   RecallPacket,
   RuntimeConfig,
+  RuntimeAdminApi,
   RuntimePaths,
   RuntimeStats,
   SearchClaimsInput,
@@ -18,6 +18,7 @@ import type {
 } from "./types.js";
 import { buildIngestionArtifacts } from "./ingestion/service.js";
 import { buildRecallPacket } from "./recall/packet.js";
+import { scopeSignature } from "./scope.js";
 
 const POSITIVE_OUTCOMES = new Set<OutcomeType>([
   "test_pass",
@@ -54,20 +55,19 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function normalizeScope(scope?: ClaimScope): ClaimScope | undefined {
-  if (!scope) return undefined;
-
-  const normalized: ClaimScope = {};
-  if (scope.repo) normalized.repo = scope.repo;
-  if (scope.branch) normalized.branch = scope.branch;
-  if (scope.cwd_prefix) normalized.cwd_prefix = scope.cwd_prefix;
-  if (scope.files?.length) normalized.files = [...scope.files].sort();
-
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
+function extractIssueId(event: NormalizedEvent): string | undefined {
+  const explicit = asString(event.metadata?.issue_id);
+  if (explicit) return explicit;
+  const match = event.content.match(/#(\d+)/);
+  return match?.[1];
 }
 
-function scopeSignature(scope?: ClaimScope): string {
-  return JSON.stringify(normalizeScope(scope) ?? null);
+function isSuccessfulTestResult(event: NormalizedEvent): boolean {
+  return (
+    event.event_type === "test_result" &&
+    typeof event.metadata?.exit_code === "number" &&
+    event.metadata.exit_code === 0
+  );
 }
 
 function scorePositive(oldScore: number, strength: number): number {
@@ -117,9 +117,22 @@ function buildTransition(
 export class ProjectMemoryRuntime {
   private readonly storage: RuntimeStorage;
   private initialized = false;
+  private readonly adminApi: RuntimeAdminApi;
 
   constructor(config: RuntimeConfig = {}) {
     this.storage = new RuntimeStorage(config);
+    this.adminApi = {
+      insertClaimRecord: (claim) => {
+        this.initialize();
+        this.storage.insertClaim(claim);
+      },
+      insertOutcomeRecord: (outcome) => {
+        this.initialize();
+        this.storage.transact(() => {
+          this.applyOutcome(outcome);
+        });
+      },
+    };
   }
 
   initialize(): void {
@@ -137,54 +150,51 @@ export class ProjectMemoryRuntime {
     return this.storage.paths;
   }
 
+  getAdminApi(): RuntimeAdminApi {
+    return this.adminApi;
+  }
+
   recordEvent(event: NormalizedEvent): void {
     this.initialize();
-    const inserted = this.storage.insertEventWithResult(event);
-    if (!inserted) return;
+    this.storage.transact(() => {
+      const inserted = this.storage.insertEventWithResult(event);
+      if (!inserted) return;
 
-    const artifacts = buildIngestionArtifacts(event);
+      const artifacts = buildIngestionArtifacts(event);
 
-    for (const claim of artifacts.claims) {
-      const scopeJson = claim.scope ? JSON.stringify(claim.scope) : null;
-      const existingClaims = this.storage.findActiveSingletonClaims(
-        claim.project_id,
-        claim.canonical_key,
-        scopeJson
-      );
-
-      for (const existing of existingClaims) {
-        if (existing.id === claim.id) continue;
-        this.storage.supersedeClaim(
-          existing.id,
-          claim.id,
-          "replaced by deterministic ingestion",
-          "compiler",
-          "system"
+      for (const claim of artifacts.claims) {
+        const existingClaims = this.storage.findCompatibleActiveSingletonClaims(
+          claim.project_id,
+          claim.canonical_key,
+          claim.scope,
+          claim.id
         );
+
+        for (const existing of existingClaims) {
+          this.storage.supersedeClaim(
+            existing.id,
+            claim.id,
+            "replaced by deterministic ingestion",
+            "compiler",
+            "system"
+          );
+        }
+
+        this.storage.upsertClaim(claim);
       }
 
-      this.storage.upsertClaim(claim);
-    }
-
-    for (const outcome of artifacts.outcomes) {
-      const inferredClaimIds = this.inferOutcomeClaimIds(event, outcome, artifacts.claims);
-      if (inferredClaimIds.length > 0) {
-        outcome.related_claim_ids = inferredClaimIds;
-      } else {
-        delete outcome.related_claim_ids;
+      for (const outcome of artifacts.outcomes) {
+        const inferredClaimIds = this.inferOutcomeClaimIds(event, outcome, artifacts.claims);
+        if (inferredClaimIds.length > 0) {
+          outcome.related_claim_ids = inferredClaimIds;
+        } else {
+          delete outcome.related_claim_ids;
+        }
+        this.applyOutcome(outcome);
       }
-      this.applyOutcome(outcome);
-    }
-  }
 
-  insertClaimRecord(claim: Claim): void {
-    this.initialize();
-    this.storage.insertClaim(claim);
-  }
-
-  insertOutcomeRecord(outcome: Outcome): void {
-    this.initialize();
-    this.applyOutcome(outcome);
+      this.applyThreadResolutionSignals(event, artifacts.outcomes);
+    });
   }
 
   getStats(): RuntimeStats {
@@ -418,5 +428,83 @@ export class ProjectMemoryRuntime {
     if (claim.canonical_key.startsWith("decision.avoid.")) return true;
     if (claim.type === "thread" && claim.thread_status === "open") return true;
     return false;
+  }
+
+  private applyThreadResolutionSignals(event: NormalizedEvent, outcomes: Outcome[]): void {
+    const claims = this.storage.listClaims(event.project_id).filter(
+      (claim) =>
+        claim.type === "thread" &&
+        claim.thread_status !== "resolved" &&
+        claim.status !== "archived" &&
+        claim.status !== "superseded"
+    );
+
+    for (const claim of claims) {
+      if (!this.threadShouldResolve(claim, event, outcomes)) continue;
+      this.resolveThreadClaim(claim, event.ts, outcomes[0]?.id);
+    }
+  }
+
+  private threadShouldResolve(claim: Claim, event: NormalizedEvent, outcomes: Outcome[]): boolean {
+    const matchedOutcomeTypes = new Set(outcomes.map((outcome) => outcome.outcome_type));
+    const explicitlyRelated = outcomes.some((outcome) =>
+      outcome.related_claim_ids?.includes(claim.id)
+    );
+    const issueId = extractIssueId(event);
+    const failingTest = asString(event.metadata?.failing_test);
+
+    for (const rule of claim.resolution_rules ?? []) {
+      if (rule.type === "issue_closed") {
+        if (issueId === rule.issue_id && (event.event_type === "issue_closed" || matchedOutcomeTypes.has("issue_closed"))) {
+          return true;
+        }
+      }
+
+      if (rule.type === "pr_merged") {
+        const prId = asString(event.metadata?.pr_id);
+        if (prId === rule.pr_id && event.event_type === "pr_merged") return true;
+      }
+
+      if (rule.type === "branch_deleted") {
+        const branch = event.scope?.branch ?? asString(event.metadata?.branch);
+        if (branch === rule.branch && asString(event.metadata?.branch_deleted) === "true") return true;
+      }
+
+      if (rule.type === "commit_contains") {
+        if (event.event_type === "git_commit" && event.content.includes(rule.pattern)) return true;
+      }
+
+      if (rule.type === "test_pass") {
+        if (matchedOutcomeTypes.has("test_pass") && explicitlyRelated) return true;
+        if (isSuccessfulTestResult(event) && failingTest === rule.test_name) return true;
+      }
+    }
+
+    return false;
+  }
+
+  private resolveThreadClaim(claim: Claim, resolvedAt: string, outcomeId?: string): void {
+    const updated: Claim = {
+      ...claim,
+      thread_status: "resolved",
+      resolved_at: resolvedAt,
+      status: "archived",
+      last_verified_at: resolvedAt,
+    };
+
+    if (claim.status !== "archived") {
+      this.storage.insertClaimTransition(
+        buildTransition(
+          claim,
+          "archived",
+          "resolved by lifecycle signal",
+          "resolution_rule",
+          outcomeId,
+          "system"
+        )
+      );
+    }
+
+    this.storage.upsertClaim(updated);
   }
 }
