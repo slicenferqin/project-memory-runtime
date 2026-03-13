@@ -96,6 +96,18 @@ metadata.memory_hints = {
 - `family_hint` 只负责把事件路由到 family
 - `canonical_key_hint` 表达 family 内的稳定 slot
 - compiler 负责最终 key 组装
+- `family_hint` 不是 claim 直写后门
+
+V1 事件类型限制：
+
+- `decision.current_strategy`
+  - 仅允许 `user_confirmation`
+- `decision.rejected_strategy`
+  - 仅允许 `user_confirmation`
+- `thread.blocker`
+  - 仅允许 `user_message` / `user_confirmation`
+- `thread.open_question`
+  - 仅允许 `user_message` / `user_confirmation`
 
 示例：
 

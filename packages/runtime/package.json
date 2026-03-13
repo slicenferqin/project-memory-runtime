@@ -4,6 +4,9 @@
   "private": true,
   "description": "Core runtime for Project Memory Runtime",
   "license": "GPL-3.0-only",
+  "engines": {
+    "node": ">=20 <21"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

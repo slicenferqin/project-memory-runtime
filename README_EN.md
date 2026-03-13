@@ -102,6 +102,13 @@ The current focus is no longer expanding contracts, but:
 - making benchmark results reproducible
 - only then wiring the first Claude Code reference adapter
 
+Common local verification entrypoints:
+
+- Node `20.x`
+- `pnpm run test`
+- `pnpm run benchmark:runtime`
+- `pnpm run rebuild:native`
+
 ---
 
 ## Start Here

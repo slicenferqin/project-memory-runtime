@@ -107,7 +107,7 @@ Session recovery benchmark 的标准答案应来自以下二选一：
 ### 5.5 v1 通过线
 
 - superseded leakage <= 5%
-- stale recall rate 在无 scope 命中时显著低于 active replacement
+- stale recall rate 在存在 active replacement 时应为 0
 
 ---
 
@@ -253,6 +253,12 @@ V1 建议输出：
 
 - JSON 结果
 - Markdown 摘要
+
+runtime-only benchmark 约束：
+
+- 优先通过 `ledger_events -> compiler -> outcome link -> recall` 主闭环重放
+- 不得使用 admin/operator bypass 伪造核心语义
+- admin/operator 入口仅允许出现在独立 operator-integrated 套件
 
 ---
 

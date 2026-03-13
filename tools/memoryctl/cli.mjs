@@ -4,6 +4,8 @@ import path from "node:path";
 import process from "node:process";
 import { ProjectMemoryRuntime } from "../../packages/runtime/dist/index.js";
 
+const VERIFY_STATUSES = new Set(["system_verified", "user_confirmed", "disputed"]);
+
 function fail(message) {
   console.error(message);
   process.exitCode = 1;
@@ -173,6 +175,10 @@ async function main() {
       }
       if (typeof options.status !== "string" || typeof options.method !== "string") {
         fail("verify requires --status and --method");
+        return;
+      }
+      if (!VERIFY_STATUSES.has(options.status)) {
+        fail(`invalid verify status: ${options.status}`);
         return;
       }
 

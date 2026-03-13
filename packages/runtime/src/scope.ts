@@ -7,13 +7,6 @@ function sameFiles(left?: string[], right?: string[]): boolean {
   return left.every((value, index) => value === right[index]);
 }
 
-function scopeLevel(scope?: ClaimScope): "project" | "branch" | "cwd" | "files" {
-  if (scope?.files?.length) return "files";
-  if (scope?.cwd_prefix) return "cwd";
-  if (scope?.branch) return "branch";
-  return "project";
-}
-
 export function normalizeClaimScope(scope?: ClaimScope): ClaimScope | undefined {
   if (!scope) return undefined;
 
@@ -37,11 +30,22 @@ export function singletonScopeCompatible(
   const left = normalizeClaimScope(leftScope);
   const right = normalizeClaimScope(rightScope);
 
-  if (scopeLevel(left) !== scopeLevel(right)) return false;
-  if ((left?.branch ?? null) !== (right?.branch ?? null)) return false;
-  if ((left?.cwd_prefix ?? null) !== (right?.cwd_prefix ?? null)) return false;
-  if (!sameFiles(left?.files, right?.files)) return false;
-  if (left?.repo && right?.repo && left.repo !== right.repo) return false;
+  return (
+    (left?.repo ?? null) === (right?.repo ?? null) &&
+    (left?.branch ?? null) === (right?.branch ?? null) &&
+    (left?.cwd_prefix ?? null) === (right?.cwd_prefix ?? null) &&
+    sameFiles(left?.files, right?.files)
+  );
+}
 
-  return true;
+export function scopeSpecificity(scope?: ClaimScope): number {
+  const normalized = normalizeClaimScope(scope);
+  if (!normalized) return 0;
+
+  let score = 0;
+  if (normalized.repo) score += 1;
+  if (normalized.branch) score += 2;
+  if (normalized.cwd_prefix) score += 4;
+  if (normalized.files?.length) score += 8;
+  return score;
 }

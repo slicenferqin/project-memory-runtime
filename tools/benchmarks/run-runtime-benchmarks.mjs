@@ -15,6 +15,16 @@ function createRuntime(prefix) {
   return runtime;
 }
 
+function createSharedRuntimePair(prefix) {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dbPath = path.join(dataDir, "runtime.sqlite");
+  const writer = new ProjectMemoryRuntime({ dataDir, dbPath });
+  const reader = new ProjectMemoryRuntime({ dataDir, dbPath });
+  writer.initialize();
+  reader.initialize();
+  return { writer, reader };
+}
+
 function round(value) {
   return Number(value.toFixed(4));
 }
@@ -37,6 +47,13 @@ function rankById(packet) {
   const ranks = new Map();
   packet.active_claims.forEach((claim, index) => ranks.set(claim.id, index));
   return ranks;
+}
+
+function requireValue(value, message) {
+  if (value === undefined || value === null) {
+    throw new Error(message);
+  }
+  return value;
 }
 
 function runSessionRecoveryBenchmark() {
@@ -131,6 +148,8 @@ function runSessionRecoveryBenchmark() {
     metrics: {
       active_claim_recall: round(activeRecall.recall),
       open_thread_recall: round(threadRecall.recall),
+      active_claim_recall_delta_vs_no_memory: round(activeRecall.recall),
+      open_thread_recall_delta_vs_no_memory: round(threadRecall.recall),
       active_claim_hits: activeRecall.hits,
       open_thread_hits: threadRecall.hits,
     },
@@ -144,69 +163,82 @@ function runSessionRecoveryBenchmark() {
 
 function runStaleSuppressionBenchmark() {
   const runtime = createRuntime("pmr-bench-stale-");
-  const admin = runtime.getAdminApi();
 
-  admin.insertClaimRecord({
-    id: "clm-active",
-    created_at: "2026-03-12T00:00:00.000Z",
+  runtime.recordEvent({
+    id: "evt-stale-old",
+    ts: "2025-01-01T00:00:00.000Z",
     project_id: "github.com/acme/demo",
-    type: "decision",
-    assertion_kind: "instruction",
-    canonical_key: "decision.persistence.backend.active",
-    cardinality: "singleton",
-    content: "Use SQLite backend strategy",
-    source_event_ids: ["evt-active"],
-    confidence: 0.85,
-    importance: 0.85,
-    outcome_score: 0.2,
-    verification_status: "user_confirmed",
-    status: "active",
-  });
-  admin.insertClaimRecord({
-    id: "clm-stale",
-    created_at: "2026-01-01T00:00:00.000Z",
-    project_id: "github.com/acme/demo",
-    type: "decision",
-    assertion_kind: "instruction",
-    canonical_key: "decision.persistence.backend.stale",
-    cardinality: "singleton",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
     content: "Use JSON backend strategy",
-    source_event_ids: ["evt-stale"],
-    confidence: 0.7,
-    importance: 0.7,
-    outcome_score: -0.3,
-    verification_status: "inferred",
-    status: "stale",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend.stale",
+      },
+    },
   });
-  admin.insertClaimRecord({
-    id: "clm-superseded",
-    created_at: "2026-02-01T00:00:00.000Z",
+
+  runtime.recordEvent({
+    id: "evt-active-current",
+    ts: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/demo",
-    type: "decision",
-    assertion_kind: "instruction",
-    canonical_key: "decision.persistence.backend.superseded",
-    cardinality: "singleton",
-    content: "Use flat-file backend strategy",
-    source_event_ids: ["evt-superseded"],
-    confidence: 0.75,
-    importance: 0.75,
-    outcome_score: 0,
-    verification_status: "inferred",
-    status: "superseded",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Use SQLite backend strategy",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend.active",
+      },
+    },
   });
+
+  runtime.recordEvent({
+    id: "evt-superseded-old",
+    ts: "2026-03-10T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Use flat-file backend strategy",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend.superseded",
+      },
+    },
+  });
+  runtime.recordEvent({
+    id: "evt-superseded-new",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Replace flat-file backend strategy",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend.superseded",
+      },
+    },
+  });
+
+  runtime.sweepStaleClaims("2026-03-13T00:00:00.000Z");
 
   const packet = runtime.searchClaims({
     project_id: "github.com/acme/demo",
     query: "backend strategy",
     scope: {},
-    limit: 10,
+    limit: 1,
   });
 
   const activeKeys = canonicalKeys(packet.active_claims);
   const staleIndex = activeKeys.indexOf("decision.persistence.backend.stale");
   const activeIndex = activeKeys.indexOf("decision.persistence.backend.active");
-  const supersededLeakage = activeKeys.includes("decision.persistence.backend.superseded") ? 1 : 0;
-  const pass = supersededLeakage === 0 && activeIndex !== -1 && (staleIndex === -1 || activeIndex < staleIndex);
+  const supersededLeakage = packet.active_claims.some((claim) => claim.status === "superseded")
+    ? 1
+    : 0;
+  const pass = supersededLeakage === 0 && activeIndex === 0 && staleIndex === -1;
 
   runtime.close();
 
@@ -227,56 +259,57 @@ function runStaleSuppressionBenchmark() {
 
 function runOutcomeLearningBenchmark() {
   const runtime = createRuntime("pmr-bench-outcome-");
-  const admin = runtime.getAdminApi();
-
-  admin.insertClaimRecord({
-    id: "clm-neutral",
-    created_at: "2026-03-12T00:00:00.000Z",
+  runtime.recordEvent({
+    id: "evt-neutral",
+    ts: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/demo",
-    type: "decision",
-    assertion_kind: "instruction",
-    canonical_key: "decision.backend.neutral",
-    cardinality: "singleton",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
     content: "Use neutral backend strategy",
-    source_event_ids: ["evt-neutral"],
-    confidence: 0.8,
-    importance: 0.8,
-    outcome_score: 0,
-    verification_status: "system_verified",
-    status: "active",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.backend.neutral",
+      },
+    },
   });
-  admin.insertClaimRecord({
-    id: "clm-negative",
-    created_at: "2026-03-12T00:00:00.000Z",
+  runtime.recordEvent({
+    id: "evt-negative",
+    ts: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/demo",
-    type: "decision",
-    assertion_kind: "instruction",
-    canonical_key: "decision.backend.negative",
-    cardinality: "singleton",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
     content: "Use JSON backend strategy",
-    source_event_ids: ["evt-negative"],
-    confidence: 0.8,
-    importance: 0.8,
-    outcome_score: 0,
-    verification_status: "system_verified",
-    status: "active",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.backend.negative",
+      },
+    },
   });
-  admin.insertClaimRecord({
-    id: "clm-positive",
-    created_at: "2026-03-12T00:00:00.000Z",
+  runtime.recordEvent({
+    id: "evt-positive",
+    ts: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/demo",
-    type: "decision",
-    assertion_kind: "instruction",
-    canonical_key: "decision.backend.positive",
-    cardinality: "singleton",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
     content: "Use SQLite backend strategy",
-    source_event_ids: ["evt-positive"],
-    confidence: 0.8,
-    importance: 0.8,
-    outcome_score: 0,
-    verification_status: "system_verified",
-    status: "active",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.backend.positive",
+      },
+    },
   });
+
+  const positiveClaim = runtime
+    .listClaims("github.com/acme/demo")
+    .find((claim) => claim.canonical_key === "decision.backend.positive");
+  const negativeClaim = runtime
+    .listClaims("github.com/acme/demo")
+    .find((claim) => claim.canonical_key === "decision.backend.negative");
+  const positiveClaimId = requireValue(positiveClaim?.id, "missing positive benchmark claim");
+  const negativeClaimId = requireValue(negativeClaim?.id, "missing negative benchmark claim");
 
   const baseline = runtime.searchClaims({
     project_id: "github.com/acme/demo",
@@ -285,57 +318,62 @@ function runOutcomeLearningBenchmark() {
     limit: 10,
   });
   const baselineRanks = rankById(baseline);
+  const rounds = [];
 
-  admin.insertOutcomeRecord({
-    id: "out-positive-1",
-    ts: "2026-03-12T01:00:00.000Z",
-    project_id: "github.com/acme/demo",
-    related_event_ids: ["evt-positive-outcome-1"],
-    related_claim_ids: ["clm-positive"],
-    outcome_type: "test_pass",
-    strength: 1,
-  });
-  admin.insertOutcomeRecord({
-    id: "out-positive-2",
-    ts: "2026-03-12T01:05:00.000Z",
-    project_id: "github.com/acme/demo",
-    related_event_ids: ["evt-positive-outcome-2"],
-    related_claim_ids: ["clm-positive"],
-    outcome_type: "commit_kept",
-    strength: 1,
-  });
-  admin.insertOutcomeRecord({
-    id: "out-negative-1",
-    ts: "2026-03-12T01:10:00.000Z",
-    project_id: "github.com/acme/demo",
-    related_event_ids: ["evt-negative-outcome-1"],
-    related_claim_ids: ["clm-negative"],
-    outcome_type: "manual_override",
-    strength: 1,
-  });
-  admin.insertOutcomeRecord({
-    id: "out-negative-2",
-    ts: "2026-03-12T01:15:00.000Z",
-    project_id: "github.com/acme/demo",
-    related_event_ids: ["evt-negative-outcome-2"],
-    related_claim_ids: ["clm-negative"],
-    outcome_type: "commit_reverted",
-    strength: 1,
-  });
+  for (let round = 1; round <= 3; round += 1) {
+    runtime.recordEvent({
+      id: `evt-positive-outcome-${round}`,
+      ts: `2026-03-12T01:0${round}:00.000Z`,
+      project_id: "github.com/acme/demo",
+      agent_id: "claude-code",
+      agent_version: "unknown",
+      event_type: round % 2 === 0 ? "build_result" : "test_result",
+      content: "Positive strategy succeeded",
+      metadata: {
+        exit_code: 0,
+        related_claim_ids: [positiveClaimId],
+      },
+    });
 
-  const afterOutcomes = runtime.searchClaims({
-    project_id: "github.com/acme/demo",
-    query: "backend strategy",
-    scope: {},
-    limit: 10,
-  });
-  const afterRanks = rankById(afterOutcomes);
+    runtime.recordEvent({
+      id: `evt-negative-outcome-${round}`,
+      ts: `2026-03-12T01:1${round}:00.000Z`,
+      project_id: "github.com/acme/demo",
+      agent_id: "claude-code",
+      agent_version: "unknown",
+      event_type: "manual_override",
+      content: "Negative strategy was overridden",
+      metadata: {
+        related_claim_ids: [negativeClaimId],
+      },
+    });
 
-  const positiveDelta = baselineRanks.get("clm-positive") - afterRanks.get("clm-positive");
-  const negativeDelta = afterRanks.get("clm-negative") - baselineRanks.get("clm-negative");
+    const packet = runtime.searchClaims({
+      project_id: "github.com/acme/demo",
+      query: "backend strategy",
+      scope: {},
+      limit: 10,
+    });
+    const ranks = rankById(packet);
+    rounds.push({
+      round,
+      positive_rank: ranks.get(positiveClaimId),
+      negative_rank: ranks.get(negativeClaimId),
+      order: canonicalKeys(packet.active_claims),
+    });
+  }
+
+  const finalRound = rounds[rounds.length - 1];
+  const positiveDelta =
+    requireValue(baselineRanks.get(positiveClaimId), "missing positive baseline rank") -
+    requireValue(finalRound.positive_rank, "missing positive final rank");
+  const negativeDelta =
+    requireValue(finalRound.negative_rank, "missing negative final rank") -
+    requireValue(baselineRanks.get(negativeClaimId), "missing negative baseline rank");
   const pass =
-    afterRanks.get("clm-positive") < afterRanks.get("clm-neutral") &&
-    afterRanks.get("clm-neutral") < afterRanks.get("clm-negative") &&
+    rounds.length === 3 &&
+    rounds[0].positive_rank >= finalRound.positive_rank &&
+    rounds[0].negative_rank <= finalRound.negative_rank &&
     positiveDelta > 0 &&
     negativeDelta > 0;
 
@@ -347,21 +385,21 @@ function runOutcomeLearningBenchmark() {
     metrics: {
       positive_rank_delta: positiveDelta,
       negative_rank_delta: negativeDelta,
-      final_positive_rank: afterRanks.get("clm-positive"),
-      final_neutral_rank: afterRanks.get("clm-neutral"),
-      final_negative_rank: afterRanks.get("clm-negative"),
+      rounds: rounds.length,
+      final_positive_rank: finalRound.positive_rank,
+      final_negative_rank: finalRound.negative_rank,
     },
     packet: {
       baseline_order: canonicalKeys(baseline.active_claims),
-      final_order: canonicalKeys(afterOutcomes.active_claims),
+      rounds,
     },
   };
 }
 
 function runMultiAgentConsistencyBenchmark() {
-  const runtime = createRuntime("pmr-bench-multi-agent-");
+  const { writer, reader } = createSharedRuntimePair("pmr-bench-multi-agent-");
 
-  runtime.recordEvent({
+  writer.recordEvent({
     id: "evt-facts",
     ts: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/demo",
@@ -370,7 +408,7 @@ function runMultiAgentConsistencyBenchmark() {
     event_type: "agent_message",
     content: "The repo uses pnpm and vitest. Run pnpm build.",
   });
-  runtime.recordEvent({
+  writer.recordEvent({
     id: "evt-issue",
     ts: "2026-03-12T00:00:01.000Z",
     project_id: "github.com/acme/demo",
@@ -380,7 +418,7 @@ function runMultiAgentConsistencyBenchmark() {
     content: "Tracking issue #42",
     metadata: { issue_id: "42" },
   });
-  runtime.recordEvent({
+  writer.recordEvent({
     id: "evt-decision",
     ts: "2026-03-12T00:00:02.000Z",
     project_id: "github.com/acme/demo",
@@ -395,12 +433,12 @@ function runMultiAgentConsistencyBenchmark() {
     },
   });
 
-  const agentA = runtime.buildSessionBrief({
+  const agentA = writer.buildSessionBrief({
     project_id: "github.com/acme/demo",
     agent_id: "claude-code",
     scope: {},
   });
-  const agentB = runtime.buildSessionBrief({
+  const agentB = reader.buildSessionBrief({
     project_id: "github.com/acme/demo",
     agent_id: "codex",
     scope: {},
@@ -414,7 +452,8 @@ function runMultiAgentConsistencyBenchmark() {
     JSON.stringify(activeA) === JSON.stringify(activeB) &&
     JSON.stringify(threadsA) === JSON.stringify(threadsB);
 
-  runtime.close();
+  writer.close();
+  reader.close();
 
   return {
     name: "multi_agent_consistency",

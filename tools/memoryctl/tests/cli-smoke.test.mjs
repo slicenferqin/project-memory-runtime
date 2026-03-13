@@ -23,6 +23,16 @@ function runMemoryctl(args, cwd = repoRoot) {
   return result.stdout.trim();
 }
 
+function runMemoryctlExpectFailure(args, cwd = repoRoot) {
+  const result = spawnSync(process.execPath, [cliPath, ...args], {
+    cwd,
+    encoding: "utf8",
+  });
+
+  assert.notEqual(result.status, 0);
+  return `${result.stderr}${result.stdout}`;
+}
+
 test("memoryctl inspects claims and verifies a claim", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-memoryctl-"));
   const { ProjectMemoryRuntime } = await import(runtimeEntry);
@@ -111,6 +121,51 @@ test("memoryctl explains a claim and renders snapshot output", async () => {
   );
   assert.ok(snapshotOutput.includes("active_claims="));
   assert.ok(snapshotOutput.includes("open_threads="));
+
+  runtime.close();
+});
+
+test("memoryctl rejects invalid verify status values", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-memoryctl-invalid-"));
+  const { ProjectMemoryRuntime } = await import(runtimeEntry);
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
+  runtime.initialize();
+  admin.insertClaimRecord({
+    id: "clm-invalid-status",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.invalid.status",
+    cardinality: "singleton",
+    content: "Use SQLite backend",
+    source_event_ids: ["evt-invalid-status"],
+    confidence: 0.8,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "inferred",
+    status: "active",
+  });
+
+  const output = runMemoryctlExpectFailure(
+    [
+      "verify",
+      "clm-invalid-status",
+      "--data-dir",
+      tempDir,
+      "--status",
+      "banana",
+      "--method",
+      "memoryctl_smoke",
+    ],
+    repoRoot
+  );
+
+  assert.ok(output.includes("invalid verify status"));
+  const claim = runtime.getClaim("clm-invalid-status");
+  assert.equal(claim?.verification_status, "inferred");
 
   runtime.close();
 });

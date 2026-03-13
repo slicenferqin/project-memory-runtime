@@ -50,7 +50,7 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
   });
 
   const stats = runtime.getStats();
-  assert.equal(stats.migrationsApplied, 1);
+  assert.equal(stats.migrationsApplied, 2);
   assert.equal(stats.events, 1);
   assert.equal(stats.claims, 1);
   assert.equal(stats.outcomes, 1);
@@ -217,6 +217,15 @@ test("runtime applies positive and negative outcomes to claim lifecycle", async 
   const transitions = runtime.listClaimTransitions("github.com/acme/demo");
   assert.ok(transitions.some((entry) => entry.to_status === "stale"));
   assert.ok(transitions.some((entry) => entry.to_status === "active"));
+
+  const disputed = runtime.verifyClaim({
+    claim_id: "clm-decision",
+    status: "disputed",
+    method: "review_dispute",
+  });
+  assert.ok(disputed);
+  assert.equal(disputed.status, "stale");
+  assert.equal(disputed.verification_status, "disputed");
 
   runtime.close();
 });
@@ -464,7 +473,7 @@ test("runtime resolves failing test thread when matching test passes", async () 
   runtime.close();
 });
 
-test("runtime enforces active singleton invariant for compatible scopes", async () => {
+test("runtime enforces active singleton invariant only within the same scope signature", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-scope-invariant-"));
   const { ProjectMemoryRuntime } = await import("../dist/index.js");
 
@@ -490,9 +499,27 @@ test("runtime enforces active singleton invariant for compatible scopes", async 
     scope: { branch: "main" },
   });
 
+  admin.insertClaimRecord({
+    id: "clm-repo-origin",
+    created_at: "2026-03-12T00:01:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.persistence.backend",
+    cardinality: "singleton",
+    content: "Use repo-specific backend on origin",
+    source_event_ids: ["evt-repo-origin"],
+    confidence: 0.9,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "user_confirmed",
+    status: "active",
+    scope: { repo: "origin" },
+  });
+
   assert.throws(() =>
     admin.insertClaimRecord({
-      id: "clm-repo-branch-main",
+      id: "clm-branch-main-duplicate",
       created_at: "2026-03-12T00:01:00.000Z",
       project_id: "github.com/acme/demo",
       type: "decision",
@@ -500,13 +527,13 @@ test("runtime enforces active singleton invariant for compatible scopes", async 
       canonical_key: "decision.persistence.backend",
       cardinality: "singleton",
       content: "Use Postgres backend on main",
-      source_event_ids: ["evt-repo-branch-main"],
+      source_event_ids: ["evt-branch-main-duplicate"],
       confidence: 0.9,
       importance: 0.8,
       outcome_score: 0,
       verification_status: "user_confirmed",
       status: "active",
-      scope: { repo: "origin", branch: "main" },
+      scope: { branch: "main" },
     })
   );
 
@@ -516,7 +543,74 @@ test("runtime enforces active singleton invariant for compatible scopes", async 
       (claim) =>
         claim.canonical_key === "decision.persistence.backend" && claim.status === "active"
     );
-  assert.equal(activeClaims.length, 1);
+  assert.equal(activeClaims.length, 2);
+
+  const repoScopedSnapshot = runtime.buildProjectSnapshot({
+    project_id: "github.com/acme/demo",
+    agent_id: "memoryctl",
+    scope: { repo: "origin" },
+  });
+  assert.equal(
+    repoScopedSnapshot.active_claims[0]?.canonical_key,
+    "decision.persistence.backend"
+  );
+  assert.equal(repoScopedSnapshot.active_claims[0]?.scope?.repo, "origin");
+
+  runtime.close();
+});
+
+test("runtime rejects illegal claim states and invalid verification values", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-invalid-claims-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
+  runtime.initialize();
+
+  assert.throws(() =>
+    admin.insertClaimRecord({
+      id: "clm-invalid-verify",
+      created_at: "2026-03-12T00:00:00.000Z",
+      project_id: "github.com/acme/demo",
+      type: "decision",
+      assertion_kind: "instruction",
+      canonical_key: "decision.invalid.verify",
+      cardinality: "singleton",
+      content: "Invalid verification status",
+      source_event_ids: ["evt-invalid"],
+      confidence: 0.8,
+      importance: 0.8,
+      outcome_score: 0,
+      verification_status: "banana",
+      status: "active",
+    })
+  );
+
+  admin.insertClaimRecord({
+    id: "clm-archived",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "thread",
+    assertion_kind: "todo",
+    canonical_key: "thread.issue.404",
+    cardinality: "singleton",
+    content: "Issue #404 resolved",
+    source_event_ids: ["evt-archived"],
+    confidence: 0.8,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "system_verified",
+    status: "archived",
+    thread_status: "resolved",
+    resolved_at: "2026-03-12T00:00:01.000Z",
+  });
+
+  assert.throws(() =>
+    runtime.markClaimStale({
+      claim_id: "clm-archived",
+      reason: "should fail",
+    })
+  );
 
   runtime.close();
 });
@@ -668,9 +762,9 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     id: "evt-blocker",
     ts: "2026-03-12T00:00:01.000Z",
     project_id: "github.com/acme/demo",
-    agent_id: "claude-code",
+    agent_id: "user",
     agent_version: "unknown",
-    event_type: "agent_message",
+    event_type: "user_message",
     content: "Windows path normalization is blocking reliable install tests",
     metadata: {
       memory_hints: {
@@ -700,9 +794,9 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     id: "evt-question",
     ts: "2026-03-12T00:00:03.000Z",
     project_id: "github.com/acme/demo",
-    agent_id: "claude-code",
+    agent_id: "user",
     agent_version: "unknown",
-    event_type: "agent_message",
+    event_type: "user_message",
     content: "Should path normalization happen before or after package extraction?",
     metadata: {
       memory_hints: {
@@ -734,6 +828,27 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
   );
   assert.ok(
     brief.open_threads.some((claim) => claim.canonical_key === "thread.blocker.windows.install")
+  );
+
+  runtime.recordEvent({
+    id: "evt-blocker-agent",
+    ts: "2026-03-12T00:00:04.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "agent_message",
+    content: "Agent claims this is a blocker",
+    metadata: {
+      memory_hints: {
+        family_hint: "blocker",
+        canonical_key_hint: "agent.injected",
+      },
+    },
+  });
+
+  const claimsAfterAgentHint = runtime.listClaims("github.com/acme/demo");
+  assert.ok(
+    !claimsAfterAgentHint.some((claim) => claim.canonical_key === "thread.blocker.agent.injected")
   );
 
   runtime.close();

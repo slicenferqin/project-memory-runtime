@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Claim, ClaimScope, NormalizedEvent, Outcome, ResolutionRule } from "../types.js";
 import { normalizeClaimScope } from "../scope.js";
+import { familyHintAllowedForEvent } from "../validation.js";
 
 interface MemoryHints {
   canonical_key_hint?: string;
@@ -187,6 +188,7 @@ function hintedFamilyCanonicalKey(
 function buildHintedFamilyClaim(event: NormalizedEvent): Claim | null {
   const hints = (event.metadata?.memory_hints ?? {}) as MemoryHints;
   if (!hints.family_hint) return null;
+  if (!familyHintAllowedForEvent(hints.family_hint, event.event_type)) return null;
 
   const content = asString(event.metadata?.claim_content) ?? event.content;
   const canonicalKey = hintedFamilyCanonicalKey(

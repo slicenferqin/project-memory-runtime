@@ -22,6 +22,12 @@ import type {
 import { buildIngestionArtifacts } from "./ingestion/service.js";
 import { buildRecallPacket } from "./recall/packet.js";
 import { scopeSignature } from "./scope.js";
+import {
+  RuntimeInvariantError,
+  assertClaimTransitionAllowed,
+  assertVerificationStatus,
+  validateClaimRecord,
+} from "./validation.js";
 
 const POSITIVE_OUTCOMES = new Set<OutcomeType>([
   "test_pass",
@@ -311,6 +317,8 @@ export class ProjectMemoryRuntime {
         ...claim,
         status: "stale",
       };
+      assertClaimTransitionAllowed(claim.status, "stale", "stale_sweep");
+      validateClaimRecord(updated);
       this.storage.upsertClaim(updated);
       this.storage.insertClaimTransition(
         buildTransition(
@@ -330,6 +338,7 @@ export class ProjectMemoryRuntime {
 
   verifyClaim(input: VerifyClaimInput): Claim | undefined {
     this.initialize();
+    assertVerificationStatus(input.status);
     const claim = this.storage.getClaimById(input.claim_id);
     if (!claim) return undefined;
 
@@ -338,26 +347,38 @@ export class ProjectMemoryRuntime {
       ...claim,
       verification_status: input.status,
       verification_method: input.method,
-      last_verified_at:
-        input.status === "disputed" ? claim.last_verified_at : ts,
+      last_verified_at: input.status === "disputed" ? claim.last_verified_at : ts,
     };
+
+    if (input.status === "disputed" && claim.status === "active") {
+      assertClaimTransitionAllowed(claim.status, "stale", "verify_claim disputed");
+      updated.status = "stale";
+    } else if (
+      input.status !== "disputed" &&
+      (claim.status === "stale" || claim.status === "archived")
+    ) {
+      assertClaimTransitionAllowed(claim.status, "active", "verify_claim re-verified");
+      updated.status = "active";
+    }
+
+    validateClaimRecord(updated);
 
     this.storage.transact(() => {
       this.storage.upsertClaim(updated);
 
-      if (claim.status === "stale" && input.status !== "disputed") {
+      if (claim.status !== updated.status) {
         this.storage.insertClaimTransition(
           buildTransition(
             claim,
-            "active",
-            `re-verified by ${input.method}`,
+            updated.status,
+            input.status === "disputed"
+              ? `marked disputed by ${input.method}`
+              : `re-verified by ${input.method}`,
             "verify_claim",
             claim.id,
             input.actor ?? "operator"
           )
         );
-        updated.status = "active";
-        this.storage.upsertClaim(updated);
       }
     });
 
@@ -369,11 +390,18 @@ export class ProjectMemoryRuntime {
     const claim = this.storage.getClaimById(input.claim_id);
     if (!claim) return undefined;
     if (claim.status === "stale") return claim;
+    if (claim.status === "archived" || claim.status === "superseded") {
+      throw new RuntimeInvariantError(
+        `cannot mark ${claim.status} claim stale: ${claim.id}`
+      );
+    }
+    assertClaimTransitionAllowed(claim.status, "stale", "mark_claim_stale");
 
     const updated: Claim = {
       ...claim,
       status: "stale",
     };
+    validateClaimRecord(updated);
 
     this.storage.transact(() => {
       this.storage.upsertClaim(updated);
@@ -432,6 +460,7 @@ export class ProjectMemoryRuntime {
         updated.last_verified_at = outcome.ts;
 
         if (updated.status === "stale") {
+          assertClaimTransitionAllowed(claim.status, "active", "positive outcome");
           this.storage.insertClaimTransition(
             buildTransition(
               claim,
@@ -448,6 +477,7 @@ export class ProjectMemoryRuntime {
         updated.outcome_score = scoreNegative(updated.outcome_score, outcome.strength);
 
         if (updated.status === "active") {
+          assertClaimTransitionAllowed(claim.status, "stale", "negative outcome");
           this.storage.insertClaimTransition(
             buildTransition(
               claim,
@@ -462,6 +492,7 @@ export class ProjectMemoryRuntime {
         }
       }
 
+      validateClaimRecord(updated);
       this.storage.upsertClaim(updated);
     }
   }
@@ -591,6 +622,8 @@ export class ProjectMemoryRuntime {
       status: "archived",
       last_verified_at: resolvedAt,
     };
+    assertClaimTransitionAllowed(claim.status, "archived", "resolution_rule");
+    validateClaimRecord(updated);
 
     if (claim.status !== "archived") {
       this.storage.insertClaimTransition(

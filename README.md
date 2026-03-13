@@ -136,8 +136,10 @@ project-memory-runtime/
 
 目前最常用的本地验证入口：
 
+- Node `20.x`
 - `pnpm run test`
 - `pnpm run benchmark:runtime`
+- `pnpm run rebuild:native`
 
 ---
 

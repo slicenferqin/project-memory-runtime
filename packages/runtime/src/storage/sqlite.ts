@@ -13,6 +13,12 @@ import {
   type RuntimeStats,
 } from "../types.js";
 import { normalizeClaimScope, singletonScopeCompatible } from "../scope.js";
+import {
+  validateClaimRecord,
+  validateEventRecord,
+  validateOutcomeRecord,
+  assertClaimTransitionAllowed,
+} from "../validation.js";
 import { loadSqlMigrations } from "./migrations.js";
 
 function serializeJson(value: unknown): string | null {
@@ -100,6 +106,8 @@ export class RuntimeStorage {
   }
 
   insertEventWithResult(event: NormalizedEvent): boolean {
+    validateEventRecord(event);
+
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO ledger_events (
         id, ts, project_id, session_id, workspace_id, repo_id, parent_event_id, causation_id,
@@ -137,8 +145,9 @@ export class RuntimeStorage {
 
   upsertClaim(claim: Claim): void {
     const normalizedClaim = this.normalizeClaim(claim);
+    validateClaimRecord(normalizedClaim);
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO claims (
+      INSERT INTO claims (
         id, created_at, project_id, type, assertion_kind, canonical_key, cardinality, content,
         source_event_ids_json, confidence, importance, outcome_score, verification_status,
         verification_method, status, pinned, valid_from, valid_to, supersedes_json,
@@ -149,6 +158,31 @@ export class RuntimeStorage {
         @verification_method, @status, @pinned, @valid_from, @valid_to, @supersedes_json,
         @last_verified_at, @last_activated_at, @scope_json, @thread_status, @resolved_at, @resolution_rules_json
       )
+      ON CONFLICT(id) DO UPDATE SET
+        created_at = excluded.created_at,
+        project_id = excluded.project_id,
+        type = excluded.type,
+        assertion_kind = excluded.assertion_kind,
+        canonical_key = excluded.canonical_key,
+        cardinality = excluded.cardinality,
+        content = excluded.content,
+        source_event_ids_json = excluded.source_event_ids_json,
+        confidence = excluded.confidence,
+        importance = excluded.importance,
+        outcome_score = excluded.outcome_score,
+        verification_status = excluded.verification_status,
+        verification_method = excluded.verification_method,
+        status = excluded.status,
+        pinned = excluded.pinned,
+        valid_from = excluded.valid_from,
+        valid_to = excluded.valid_to,
+        supersedes_json = excluded.supersedes_json,
+        last_verified_at = excluded.last_verified_at,
+        last_activated_at = excluded.last_activated_at,
+        scope_json = excluded.scope_json,
+        thread_status = excluded.thread_status,
+        resolved_at = excluded.resolved_at,
+        resolution_rules_json = excluded.resolution_rules_json
     `);
 
     this.transact(() => {
@@ -189,6 +223,7 @@ export class RuntimeStorage {
   }
 
   upsertOutcome(outcome: Outcome): void {
+    validateOutcomeRecord(outcome);
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO claim_outcomes (
         id, ts, project_id, related_event_ids_json, related_claim_ids_json, outcome_type, strength, notes
@@ -304,6 +339,11 @@ export class RuntimeStorage {
       | undefined;
 
     if (!existing) return;
+    assertClaimTransitionAllowed(
+      existing.status as Claim["status"],
+      "superseded",
+      "supersede_claim"
+    );
 
     const supersedes = existing.supersedes_json
       ? (JSON.parse(existing.supersedes_json) as string[])
