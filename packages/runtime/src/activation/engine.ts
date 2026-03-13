@@ -6,7 +6,7 @@ import type {
   RecallClaim,
   SuppressionReason,
 } from "../types.js";
-import { normalizeClaimScope } from "../scope.js";
+import { normalizeClaimScope, scopeSpecificity } from "../scope.js";
 
 const DEFAULT_WEIGHTS = {
   relevance: 0.1,
@@ -59,15 +59,6 @@ function claimAnchor(claim: Claim): string {
 function freshness(claim: Claim, now: string): number {
   const lambda = FRESHNESS_LAMBDA[claim.type];
   return Math.exp(-lambda * daysBetween(claimAnchor(claim), now));
-}
-
-function scopeSpecificity(scope?: ClaimScope): number {
-  if (!scope) return 0;
-  if (scope.files?.length) return 4;
-  if (scope.cwd_prefix) return 3;
-  if (scope.branch) return 2;
-  if (scope.repo) return 1;
-  return 0;
 }
 
 function fileScopeMatches(claimFiles: string[] | undefined, queryFiles: string[] | undefined): boolean {
