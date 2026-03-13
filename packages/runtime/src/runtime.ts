@@ -2,6 +2,7 @@ import { RuntimeStorage } from "./storage/sqlite.js";
 import type {
   ActivationLog,
   Claim,
+  ClaimScope,
   ClaimStatus,
   ClaimTransition,
   NormalizedEvent,
@@ -47,6 +48,26 @@ function nowIso(): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeScope(scope?: ClaimScope): ClaimScope | undefined {
+  if (!scope) return undefined;
+
+  const normalized: ClaimScope = {};
+  if (scope.repo) normalized.repo = scope.repo;
+  if (scope.branch) normalized.branch = scope.branch;
+  if (scope.cwd_prefix) normalized.cwd_prefix = scope.cwd_prefix;
+  if (scope.files?.length) normalized.files = [...scope.files].sort();
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function scopeSignature(scope?: ClaimScope): string {
+  return JSON.stringify(normalizeScope(scope) ?? null);
 }
 
 function scorePositive(oldScore: number, strength: number): number {
@@ -146,8 +167,11 @@ export class ProjectMemoryRuntime {
     }
 
     for (const outcome of artifacts.outcomes) {
-      if (!outcome.related_claim_ids?.length && artifacts.claims.length > 0) {
-        outcome.related_claim_ids = artifacts.claims.map((claim) => claim.id);
+      const inferredClaimIds = this.inferOutcomeClaimIds(event, outcome, artifacts.claims);
+      if (inferredClaimIds.length > 0) {
+        outcome.related_claim_ids = inferredClaimIds;
+      } else {
+        delete outcome.related_claim_ids;
       }
       this.applyOutcome(outcome);
     }
@@ -348,6 +372,7 @@ export class ProjectMemoryRuntime {
     const allClaims = this.storage.listClaims(outcome.project_id);
     for (const claim of allClaims) {
       if (claim.source_event_ids.some((eventId) => outcome.related_event_ids.includes(eventId))) {
+        if (this.shouldSkipFallbackOutcomeLink(claim, outcome)) continue;
         if (seen.has(claim.id)) continue;
         seen.add(claim.id);
         claims.push(claim);
@@ -355,5 +380,43 @@ export class ProjectMemoryRuntime {
     }
 
     return claims;
+  }
+
+  private inferOutcomeClaimIds(event: NormalizedEvent, outcome: Outcome, newClaims: Claim[]): string[] {
+    if (outcome.related_claim_ids?.length) {
+      return Array.from(new Set(outcome.related_claim_ids));
+    }
+
+    if (!["manual_override", "commit_reverted"].includes(outcome.outcome_type)) {
+      return [];
+    }
+
+    const targetCanonicalKey = asString(event.metadata?.overrides_canonical_key);
+    if (!targetCanonicalKey) return [];
+
+    const avoidanceClaim = newClaims.find(
+      (claim) => claim.canonical_key === `decision.avoid.${targetCanonicalKey}`
+    );
+    const targetScopeSignature = scopeSignature(avoidanceClaim?.scope);
+
+    const relatedClaims = this.storage
+      .listClaims(event.project_id)
+      .filter(
+        (claim) =>
+          claim.status === "active" &&
+          claim.canonical_key === targetCanonicalKey &&
+          (!avoidanceClaim || scopeSignature(claim.scope) === targetScopeSignature) &&
+          !claim.source_event_ids.includes(event.id)
+      )
+      .map((claim) => claim.id);
+
+    return Array.from(new Set(relatedClaims));
+  }
+
+  private shouldSkipFallbackOutcomeLink(claim: Claim, outcome: Outcome): boolean {
+    if (!isNegativeOutcome(outcome.outcome_type)) return false;
+    if (claim.canonical_key.startsWith("decision.avoid.")) return true;
+    if (claim.type === "thread" && claim.thread_status === "open") return true;
+    return false;
   }
 }

@@ -40,6 +40,19 @@ function insertActivationLogs(logs: ActivationLog[], writer?: (log: ActivationLo
   for (const log of logs) writer(log);
 }
 
+function selectOpenThreadCandidates(claims: Claim[]): Claim[] {
+  return claims.filter((claim) => claim.type === "thread");
+}
+
+function selectActiveClaimCandidates(
+  claims: Claim[],
+  mode: BuildRecallPacketInput["mode"]
+): Claim[] {
+  const nonThreadClaims = claims.filter((claim) => claim.type !== "thread");
+  if (mode !== "session_brief") return nonThreadClaims;
+  return nonThreadClaims.filter((claim) => claim.status === "active");
+}
+
 export interface BuildRecallPacketInput {
   projectId: string;
   agentId: string;
@@ -69,7 +82,7 @@ export function buildRecallPacket(
       maxItems: input.mode === "project_snapshot" ? 8 : 4,
       includeResolvedThreads: false,
       maxPerCanonicalKey: 1,
-      claims: input.claims.filter((claim) => claim.type === "thread"),
+      claims: selectOpenThreadCandidates(input.claims),
     }
   );
 
@@ -80,7 +93,7 @@ export function buildRecallPacket(
       maxItems: input.mode === "project_snapshot" ? 12 : input.mode === "search" ? 10 : 8,
       includeResolvedThreads: false,
       maxPerCanonicalKey: 1,
-      claims: input.claims.filter((claim) => claim.type !== "thread"),
+      claims: selectActiveClaimCandidates(input.claims, input.mode),
     }
   );
 

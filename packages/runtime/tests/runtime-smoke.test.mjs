@@ -131,6 +131,14 @@ test("runtime records deterministic fact, thread, decision and outcome artifacts
 
   const claims = runtime.listClaims("github.com/acme/demo");
   const outcomes = runtime.listOutcomes("github.com/acme/demo");
+  const originalDecision = claims.find((claim) => claim.canonical_key === "decision.persistence.backend");
+  const avoidDecision = claims.find(
+    (claim) => claim.canonical_key === "decision.avoid.decision.persistence.backend"
+  );
+  const failingThread = claims.find(
+    (claim) => claim.canonical_key === "thread.test.windows.install.path.normalizer"
+  );
+  const hotfixThread = claims.find((claim) => claim.canonical_key === "thread.branch.fix.windows.install");
 
   assert.ok(claims.some((claim) => claim.canonical_key === "repo.package_manager"));
   assert.ok(claims.some((claim) => claim.canonical_key === "repo.test_framework"));
@@ -142,6 +150,10 @@ test("runtime records deterministic fact, thread, decision and outcome artifacts
   assert.ok(claims.some((claim) => claim.canonical_key === "decision.avoid.decision.persistence.backend"));
   assert.ok(outcomes.some((outcome) => outcome.outcome_type === "test_fail"));
   assert.ok(outcomes.some((outcome) => outcome.outcome_type === "manual_override"));
+  assert.equal(originalDecision?.status, "stale");
+  assert.equal(avoidDecision?.status, "active");
+  assert.equal(failingThread?.status, "active");
+  assert.equal(hotfixThread?.status, "active");
 
   runtime.close();
 });
@@ -353,6 +365,7 @@ test("runtime builds session brief and search results with activation logs", asy
   assert.equal(brief.project_id, "github.com/acme/demo");
   assert.ok(brief.brief.includes("Current"));
   assert.ok(brief.active_claims.some((claim) => claim.canonical_key === "repo.package_manager"));
+  assert.ok(!brief.active_claims.some((claim) => claim.canonical_key === "repo.default_branch"));
   assert.ok(brief.open_threads.some((claim) => claim.canonical_key === "thread.issue.42"));
   assert.ok(!brief.open_threads.some((claim) => claim.canonical_key === "thread.issue.43"));
 
@@ -364,6 +377,24 @@ test("runtime builds session brief and search results with activation logs", asy
   });
 
   assert.ok(searchPacket.active_claims.some((claim) => claim.canonical_key === "repo.package_manager"));
+
+  const projectWideIssueSearch = runtime.searchClaims({
+    project_id: "github.com/acme/demo",
+    query: "issue",
+    scope: {},
+    limit: 5,
+  });
+
+  assert.ok(projectWideIssueSearch.open_threads.some((claim) => claim.canonical_key === "thread.issue.42"));
+
+  const mismatchedScopeSearch = runtime.searchClaims({
+    project_id: "github.com/acme/demo",
+    query: "issue",
+    scope: { branch: "other" },
+    limit: 5,
+  });
+
+  assert.ok(!mismatchedScopeSearch.open_threads.some((claim) => claim.canonical_key === "thread.issue.42"));
 
   const activationLogs = runtime.listActivationLogs("github.com/acme/demo");
   assert.ok(activationLogs.length > 0);

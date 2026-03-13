@@ -23,6 +23,18 @@ const FRESHNESS_LAMBDA: Record<Claim["type"], number> = {
   thread: 0.08,
 };
 
+function normalizeScope(scope?: ClaimScope): ClaimScope | undefined {
+  if (!scope) return undefined;
+
+  const normalized: ClaimScope = {};
+  if (scope.repo) normalized.repo = scope.repo;
+  if (scope.branch) normalized.branch = scope.branch;
+  if (scope.cwd_prefix) normalized.cwd_prefix = scope.cwd_prefix;
+  if (scope.files?.length) normalized.files = [...scope.files].sort();
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -82,22 +94,32 @@ function cwdMatches(claimPrefix: string | undefined, queryPrefix: string | undef
 }
 
 export function scopeCompatible(claimScope?: ClaimScope, requestedScope?: ClaimScope): boolean {
-  if (!claimScope) return true;
-  if (!requestedScope) return true;
-  if (claimScope.repo && claimScope.repo !== requestedScope.repo) return false;
-  if (claimScope.branch && claimScope.branch !== requestedScope.branch) return false;
-  if (!cwdMatches(claimScope.cwd_prefix, requestedScope.cwd_prefix)) return false;
-  if (!fileScopeMatches(claimScope.files, requestedScope.files)) return false;
+  const normalizedClaimScope = normalizeScope(claimScope);
+  const normalizedRequestedScope = normalizeScope(requestedScope);
+
+  if (!normalizedClaimScope) return true;
+  if (!normalizedRequestedScope) return true;
+  if (normalizedClaimScope.repo && normalizedClaimScope.repo !== normalizedRequestedScope.repo) {
+    return false;
+  }
+  if (normalizedClaimScope.branch && normalizedClaimScope.branch !== normalizedRequestedScope.branch) {
+    return false;
+  }
+  if (!cwdMatches(normalizedClaimScope.cwd_prefix, normalizedRequestedScope.cwd_prefix)) return false;
+  if (!fileScopeMatches(normalizedClaimScope.files, normalizedRequestedScope.files)) return false;
   return true;
 }
 
 function computeScopeMatch(claimScope: ClaimScope | undefined, requestedScope: ClaimScope | undefined): number {
-  if (!requestedScope) return claimScope ? 0.7 : 1.0;
-  if (!claimScope) return 0.6;
-  if (!scopeCompatible(claimScope, requestedScope)) return 0;
+  const normalizedClaimScope = normalizeScope(claimScope);
+  const normalizedRequestedScope = normalizeScope(requestedScope);
 
-  const requestedSpecificity = scopeSpecificity(requestedScope);
-  const claimSpecificity = scopeSpecificity(claimScope);
+  if (!normalizedRequestedScope) return normalizedClaimScope ? 0.7 : 1.0;
+  if (!normalizedClaimScope) return 0.6;
+  if (!scopeCompatible(normalizedClaimScope, normalizedRequestedScope)) return 0;
+
+  const requestedSpecificity = scopeSpecificity(normalizedRequestedScope);
+  const claimSpecificity = scopeSpecificity(normalizedClaimScope);
 
   if (claimSpecificity >= requestedSpecificity) return 1.0;
   if (claimSpecificity === 0) return 0.6;
