@@ -8,12 +8,13 @@
 
 ## 1. 阅读顺序
 
-1. [identity-and-scope-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/identity-and-scope-v1.md)
-2. [state-machine-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/state-machine-v1.md)
-3. [schema-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/schema-v1.md)
-4. [adapter-contract-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/adapter-contract-v1.md)
-5. [evaluation-protocol-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/evaluation-protocol-v1.md)
-6. [compiler-and-ingestion-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/compiler-and-ingestion-v1.md)
+1. [identity-and-scope-v1.md](./identity-and-scope-v1.md)
+2. [state-machine-v1.md](./state-machine-v1.md)
+3. [schema-v1.md](./schema-v1.md)
+4. [activation-spec-v1.md](./activation-spec-v1.md)
+5. [adapter-contract-v1.md](./adapter-contract-v1.md)
+6. [evaluation-protocol-v1.md](./evaluation-protocol-v1.md)
+7. [compiler-and-ingestion-v1.md](./compiler-and-ingestion-v1.md)
 
 ---
 
@@ -24,13 +25,16 @@ graph TD
   identity["identity-and-scope-v1"] --> state["state-machine-v1"]
   identity --> schema["schema-v1"]
   state --> schema
+  schema --> activation["activation-spec-v1"]
+  identity --> activation
   schema --> adapter["adapter-contract-v1"]
   schema --> eval["evaluation-protocol-v1"]
   identity --> compiler["compiler-and-ingestion-v1"]
   state --> compiler
   schema --> compiler
+  activation --> compiler
   adapter --> compiler
-  compiler --> impl["phase-1-implementation-plan (pending)"]
+  compiler --> impl["phase-1-implementation-plan"]
   eval --> impl
 ```
 
@@ -59,6 +63,12 @@ graph TD
   - runtime vs adapter responsibilities
   - capture / recall / tool boundaries
 
+- `activation-spec-v1`
+  - candidate generation
+  - eligibility filter
+  - ranking
+  - packing
+
 - `evaluation-protocol-v1`
   - benchmark
   - baseline
@@ -71,6 +81,11 @@ graph TD
   - stale sweep
   - logging boundaries
 
+- `phase-1-implementation-plan`
+  - milestone order
+  - deliverables
+  - implementation sequencing
+
 ---
 
 ## 4. 冻结顺序
@@ -80,16 +95,17 @@ graph TD
 1. identity
 2. state machine
 3. schema
-4. compiler / ingestion
-5. adapter contract
-6. evaluation
+4. activation
+5. compiler / ingestion
+6. adapter contract
+7. evaluation
 
 ---
 
-## 5. 下一步
+## 5. 实施入口
 
-在这套 contract 冻结后，下一份应产出：
+在 contract 套件基础上，当前实施入口是：
 
-- `phase-1-implementation-plan.md`
+- [phase-1-implementation-plan.md](./phase-1-implementation-plan.md)
 
-它将基于本索引中的 contract 文档来拆任务、建表、定义 runtime 骨架与 reference adapter 实现顺序。
+它负责把 contract 文档转成里程碑、实现顺序和验收标准。

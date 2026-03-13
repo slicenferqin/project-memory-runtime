@@ -1,0 +1,33 @@
+{
+  "name": "@slicenferqin/project-memory-runtime-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Core runtime for Project Memory Runtime",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "pnpm exec tsc -p tsconfig.json && node ./scripts/copy-sql-assets.mjs",
+    "clean": "rm -rf dist",
+    "test": "pnpm run build && node --test tests/runtime-smoke.test.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3"
+  }
+}

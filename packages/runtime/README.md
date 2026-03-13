@@ -1,9 +1,11 @@
 # Runtime Package
 
-Planned home of the core memory runtime:
+Core runtime package for Phase 1.
 
-- evidence ledger
-- claim lifecycle
-- activation engine
-- recall packet assembly
-- outcome feedback loop
+Milestone 1 scope:
+
+- SQLite initialization
+- migration runner
+- idempotent event writes
+- minimal claim and outcome persistence
+- runtime health and storage stats
