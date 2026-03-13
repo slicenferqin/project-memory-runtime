@@ -162,6 +162,69 @@ export interface ClaimTransition {
   actor: string;
 }
 
+export type SuppressionReason =
+  | "project_mismatch"
+  | "scope_mismatch"
+  | "verification_guard"
+  | "superseded"
+  | "archived"
+  | "expired"
+  | "low_rank"
+  | "token_budget";
+
+export interface ActivationLog {
+  id: string;
+  ts: string;
+  project_id: string;
+  claim_id: string;
+  eligibility_result: "passed" | "filtered";
+  suppression_reason?: SuppressionReason;
+  rank_score?: number;
+  packing_decision?: "included" | "dropped";
+  activation_reasons?: string[];
+}
+
+export interface RecallClaim extends Claim {
+  recall_rank: number;
+  activation_reasons: string[];
+  evidence_refs: string[];
+}
+
+export interface RecallPacket {
+  project_id: string;
+  generated_at: string;
+  agent_id: string;
+  brief: string;
+  active_claims: RecallClaim[];
+  open_threads: RecallClaim[];
+  recent_evidence_refs: string[];
+  warnings?: string[];
+}
+
+export interface SessionBriefInput {
+  project_id: string;
+  session_id?: string;
+  workspace_id?: string;
+  agent_id: string;
+  scope?: ClaimScope;
+  debug?: boolean;
+}
+
+export interface ProjectSnapshotInput {
+  project_id: string;
+  agent_id: string;
+  scope?: ClaimScope;
+  debug?: boolean;
+}
+
+export interface SearchClaimsInput {
+  project_id: string;
+  query: string;
+  scope?: ClaimScope;
+  debug?: boolean;
+  limit?: number;
+}
+
 export interface RuntimeConfig {
   dataDir?: string;
   dbPath?: string;

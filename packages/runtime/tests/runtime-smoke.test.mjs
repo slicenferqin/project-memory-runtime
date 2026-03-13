@@ -262,3 +262,114 @@ test("runtime sweeps stale claims using last_verified_at or created_at", async (
 
   runtime.close();
 });
+
+test("runtime builds session brief and search results with activation logs", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-recall-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  runtime.initialize();
+
+  runtime.insertClaimRecord({
+    id: "clm-fact",
+    created_at: "2026-03-01T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "fact",
+    assertion_kind: "fact",
+    canonical_key: "repo.package_manager",
+    cardinality: "singleton",
+    content: "Repo uses pnpm",
+    source_event_ids: ["evt-fact"],
+    confidence: 0.9,
+    importance: 0.6,
+    outcome_score: 0,
+    verification_status: "system_verified",
+    status: "active",
+  });
+
+  runtime.insertClaimRecord({
+    id: "clm-thread-open",
+    created_at: "2026-03-02T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "thread",
+    assertion_kind: "todo",
+    canonical_key: "thread.issue.42",
+    cardinality: "singleton",
+    content: "Issue #42 remains open",
+    source_event_ids: ["evt-thread"],
+    confidence: 0.8,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "inferred",
+    status: "active",
+    thread_status: "open",
+    scope: {
+      branch: "fix/windows-install",
+    },
+  });
+
+  runtime.insertClaimRecord({
+    id: "clm-thread-resolved",
+    created_at: "2026-03-02T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "thread",
+    assertion_kind: "todo",
+    canonical_key: "thread.issue.43",
+    cardinality: "singleton",
+    content: "Issue #43 resolved",
+    source_event_ids: ["evt-thread-2"],
+    confidence: 0.8,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "inferred",
+    status: "archived",
+    thread_status: "resolved",
+    resolved_at: "2026-03-03T00:00:00.000Z",
+  });
+
+  runtime.insertClaimRecord({
+    id: "clm-stale",
+    created_at: "2026-01-01T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "fact",
+    assertion_kind: "fact",
+    canonical_key: "repo.default_branch",
+    cardinality: "singleton",
+    content: "Default branch is main",
+    source_event_ids: ["evt-stale"],
+    confidence: 0.5,
+    importance: 0.5,
+    outcome_score: 0,
+    verification_status: "inferred",
+    status: "stale",
+  });
+
+  const brief = runtime.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    scope: { branch: "fix/windows-install" },
+  });
+
+  assert.equal(brief.project_id, "github.com/acme/demo");
+  assert.ok(brief.brief.includes("Current"));
+  assert.ok(brief.active_claims.some((claim) => claim.canonical_key === "repo.package_manager"));
+  assert.ok(brief.open_threads.some((claim) => claim.canonical_key === "thread.issue.42"));
+  assert.ok(!brief.open_threads.some((claim) => claim.canonical_key === "thread.issue.43"));
+
+  const searchPacket = runtime.searchClaims({
+    project_id: "github.com/acme/demo",
+    query: "pnpm",
+    scope: {},
+    limit: 5,
+  });
+
+  assert.ok(searchPacket.active_claims.some((claim) => claim.canonical_key === "repo.package_manager"));
+
+  const activationLogs = runtime.listActivationLogs("github.com/acme/demo");
+  assert.ok(activationLogs.length > 0);
+  assert.ok(
+    activationLogs.some((log) => log.suppression_reason === "archived" || log.suppression_reason === "token_budget")
+  );
+
+  runtime.close();
+});

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import {
+  type ActivationLog,
   type Claim,
   type ClaimTransition,
   type NormalizedEvent,
@@ -418,6 +419,46 @@ export class RuntimeStorage {
       from_status: nullable(transition.from_status),
       trigger_ref: nullable(transition.trigger_ref),
     });
+  }
+
+  insertActivationLog(log: ActivationLog): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO activation_logs (
+        id, ts, project_id, claim_id, eligibility_result, suppression_reason, rank_score, packing_decision, activation_reasons_json
+      ) VALUES (
+        @id, @ts, @project_id, @claim_id, @eligibility_result, @suppression_reason, @rank_score, @packing_decision, @activation_reasons_json
+      )
+    `);
+
+    stmt.run({
+      ...log,
+      suppression_reason: nullable(log.suppression_reason),
+      rank_score: log.rank_score ?? null,
+      packing_decision: nullable(log.packing_decision),
+      activation_reasons_json: serializeJson(log.activation_reasons),
+    });
+  }
+
+  listActivationLogs(projectId?: string): ActivationLog[] {
+    const rows = projectId
+      ? (this.db
+          .prepare("SELECT * FROM activation_logs WHERE project_id = ? ORDER BY ts ASC")
+          .all(projectId) as any[])
+      : (this.db.prepare("SELECT * FROM activation_logs ORDER BY ts ASC").all() as any[]);
+
+    return rows.map((row) => ({
+      id: row.id,
+      ts: row.ts,
+      project_id: row.project_id,
+      claim_id: row.claim_id,
+      eligibility_result: row.eligibility_result,
+      suppression_reason: row.suppression_reason ?? undefined,
+      rank_score: row.rank_score ?? undefined,
+      packing_decision: row.packing_decision ?? undefined,
+      activation_reasons: row.activation_reasons_json
+        ? JSON.parse(row.activation_reasons_json)
+        : undefined,
+    }));
   }
 
   listClaimTransitions(projectId?: string): ClaimTransition[] {

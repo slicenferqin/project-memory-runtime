@@ -1,16 +1,22 @@
 import { RuntimeStorage } from "./storage/sqlite.js";
 import type {
+  ActivationLog,
   Claim,
   ClaimStatus,
   ClaimTransition,
   NormalizedEvent,
   Outcome,
   OutcomeType,
+  ProjectSnapshotInput,
+  RecallPacket,
   RuntimeConfig,
   RuntimePaths,
   RuntimeStats,
+  SearchClaimsInput,
+  SessionBriefInput,
 } from "./types.js";
 import { buildIngestionArtifacts } from "./ingestion/service.js";
+import { buildRecallPacket } from "./recall/packet.js";
 
 const POSITIVE_OUTCOMES = new Set<OutcomeType>([
   "test_pass",
@@ -180,6 +186,70 @@ export class ProjectMemoryRuntime {
   listClaimTransitions(projectId?: string): ClaimTransition[] {
     this.initialize();
     return this.storage.listClaimTransitions(projectId);
+  }
+
+  listActivationLogs(projectId?: string): ActivationLog[] {
+    this.initialize();
+    return this.storage.listActivationLogs(projectId);
+  }
+
+  buildSessionBrief(input: SessionBriefInput): RecallPacket {
+    this.initialize();
+    const claims = this.storage.listClaims(input.project_id);
+    return buildRecallPacket(
+      {
+        projectId: input.project_id,
+        agentId: input.agent_id,
+        claims,
+        scope: input.scope,
+        debug: input.debug,
+        mode: "session_brief",
+      },
+      (log) => this.storage.insertActivationLog(log)
+    );
+  }
+
+  buildProjectSnapshot(input: ProjectSnapshotInput): RecallPacket {
+    this.initialize();
+    const claims = this.storage.listClaims(input.project_id);
+    return buildRecallPacket(
+      {
+        projectId: input.project_id,
+        agentId: input.agent_id,
+        claims,
+        scope: input.scope,
+        debug: input.debug,
+        mode: "project_snapshot",
+      },
+      (log) => this.storage.insertActivationLog(log)
+    );
+  }
+
+  searchClaims(input: SearchClaimsInput): RecallPacket {
+    this.initialize();
+    const claims = this.storage.listClaims(input.project_id);
+    const packet = buildRecallPacket(
+      {
+        projectId: input.project_id,
+        agentId: "memory.search",
+        claims,
+        scope: input.scope,
+        debug: input.debug,
+        query: input.query,
+        mode: "search",
+      },
+      (log) => this.storage.insertActivationLog(log)
+    );
+
+    if (typeof input.limit === "number" && input.limit >= 0) {
+      return {
+        ...packet,
+        active_claims: packet.active_claims.slice(0, input.limit),
+        open_threads: packet.open_threads.slice(0, input.limit),
+      };
+    }
+
+    return packet;
   }
 
   sweepStaleClaims(referenceTime: string = nowIso()): number {
