@@ -58,3 +58,90 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
 
   runtime.close();
 });
+
+test("runtime records deterministic fact, thread, decision and outcome artifacts", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-ingest-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+
+  runtime.recordEvent({
+    id: "evt-pm",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "agent_message",
+    content: "The repo uses pnpm and vitest. Run pnpm build.",
+  });
+
+  runtime.recordEvent({
+    id: "evt-issue",
+    ts: "2026-03-12T00:00:01.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "issue_link",
+    content: "Tracking issue #42",
+    metadata: { issue_id: "42" },
+  });
+
+  runtime.recordEvent({
+    id: "evt-test",
+    ts: "2026-03-12T00:00:02.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "test_result",
+    content: "Test run failed",
+    scope: { branch: "fix/windows-install" },
+    metadata: {
+      exit_code: 1,
+      failing_test: "Windows install path normalizer",
+    },
+  });
+
+  runtime.recordEvent({
+    id: "evt-decision",
+    ts: "2026-03-12T00:00:03.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Use SQLite as the first persistence backend",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+
+  runtime.recordEvent({
+    id: "evt-override",
+    ts: "2026-03-12T00:00:04.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "manual_override",
+    content: "The previous JSON backend approach was reverted",
+    metadata: {
+      overrides_canonical_key: "decision.persistence.backend",
+    },
+  });
+
+  const claims = runtime.listClaims("github.com/acme/demo");
+  const outcomes = runtime.listOutcomes("github.com/acme/demo");
+
+  assert.ok(claims.some((claim) => claim.canonical_key === "repo.package_manager"));
+  assert.ok(claims.some((claim) => claim.canonical_key === "repo.test_framework"));
+  assert.ok(claims.some((claim) => claim.canonical_key === "repo.build_command"));
+  assert.ok(claims.some((claim) => claim.canonical_key === "thread.issue.42"));
+  assert.ok(claims.some((claim) => claim.canonical_key === "thread.test.windows.install.path.normalizer"));
+  assert.ok(claims.some((claim) => claim.canonical_key === "thread.branch.fix.windows.install"));
+  assert.ok(claims.some((claim) => claim.canonical_key === "decision.persistence.backend"));
+  assert.ok(claims.some((claim) => claim.canonical_key === "decision.avoid.decision.persistence.backend"));
+  assert.ok(outcomes.some((outcome) => outcome.outcome_type === "test_fail"));
+  assert.ok(outcomes.some((outcome) => outcome.outcome_type === "manual_override"));
+
+  runtime.close();
+});

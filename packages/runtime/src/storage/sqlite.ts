@@ -87,6 +87,10 @@ export class RuntimeStorage {
   }
 
   insertEvent(event: NormalizedEvent): void {
+    this.insertEventWithResult(event);
+  }
+
+  insertEventWithResult(event: NormalizedEvent): boolean {
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO ledger_events (
         id, ts, project_id, session_id, workspace_id, repo_id, parent_event_id, causation_id,
@@ -97,7 +101,7 @@ export class RuntimeStorage {
       )
     `);
 
-    stmt.run({
+    const result = stmt.run({
       id: event.id,
       ts: event.ts,
       project_id: event.project_id,
@@ -114,9 +118,15 @@ export class RuntimeStorage {
       metadata_json: serializeJson(event.metadata),
       created_at: nowIso(),
     });
+
+    return result.changes > 0;
   }
 
   insertClaim(claim: Claim): void {
+    this.upsertClaim(claim);
+  }
+
+  upsertClaim(claim: Claim): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO claims (
         id, created_at, project_id, type, assertion_kind, canonical_key, cardinality, content,
@@ -161,6 +171,10 @@ export class RuntimeStorage {
   }
 
   insertOutcome(outcome: Outcome): void {
+    this.upsertOutcome(outcome);
+  }
+
+  upsertOutcome(outcome: Outcome): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO claim_outcomes (
         id, ts, project_id, related_event_ids_json, related_claim_ids_json, outcome_type, strength, notes
@@ -179,6 +193,180 @@ export class RuntimeStorage {
       strength: outcome.strength,
       notes: nullable(outcome.notes),
     });
+  }
+
+  listEvents(projectId?: string): NormalizedEvent[] {
+    const rows = projectId
+      ? (this.db
+          .prepare("SELECT * FROM ledger_events WHERE project_id = ? ORDER BY ts ASC")
+          .all(projectId) as any[])
+      : (this.db.prepare("SELECT * FROM ledger_events ORDER BY ts ASC").all() as any[]);
+
+    return rows.map((row) => ({
+      id: row.id,
+      ts: row.ts,
+      project_id: row.project_id,
+      session_id: row.session_id ?? undefined,
+      workspace_id: row.workspace_id ?? undefined,
+      repo_id: row.repo_id ?? undefined,
+      parent_event_id: row.parent_event_id ?? undefined,
+      causation_id: row.causation_id ?? undefined,
+      agent_id: row.agent_id,
+      agent_version: row.agent_version,
+      event_type: row.event_type,
+      content: row.content,
+      scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
+      metadata: row.metadata_json ? JSON.parse(row.metadata_json) : undefined,
+    }));
+  }
+
+  listClaims(projectId?: string): Claim[] {
+    const rows = projectId
+      ? (this.db
+          .prepare("SELECT * FROM claims WHERE project_id = ? ORDER BY created_at ASC")
+          .all(projectId) as any[])
+      : (this.db.prepare("SELECT * FROM claims ORDER BY created_at ASC").all() as any[]);
+
+    return rows.map((row) => ({
+      id: row.id,
+      created_at: row.created_at,
+      project_id: row.project_id,
+      type: row.type,
+      assertion_kind: row.assertion_kind,
+      canonical_key: row.canonical_key,
+      cardinality: row.cardinality,
+      content: row.content,
+      source_event_ids: JSON.parse(row.source_event_ids_json),
+      confidence: row.confidence,
+      importance: row.importance,
+      outcome_score: row.outcome_score,
+      verification_status: row.verification_status,
+      verification_method: row.verification_method ?? undefined,
+      status: row.status,
+      pinned: Boolean(row.pinned),
+      valid_from: row.valid_from ?? undefined,
+      valid_to: row.valid_to ?? undefined,
+      supersedes: row.supersedes_json ? JSON.parse(row.supersedes_json) : undefined,
+      last_verified_at: row.last_verified_at ?? undefined,
+      last_activated_at: row.last_activated_at ?? undefined,
+      scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
+      thread_status: row.thread_status ?? undefined,
+      resolved_at: row.resolved_at ?? undefined,
+      resolution_rules: row.resolution_rules_json
+        ? JSON.parse(row.resolution_rules_json)
+        : undefined,
+    }));
+  }
+
+  listOutcomes(projectId?: string): Outcome[] {
+    const rows = projectId
+      ? (this.db
+          .prepare("SELECT * FROM claim_outcomes WHERE project_id = ? ORDER BY ts ASC")
+          .all(projectId) as any[])
+      : (this.db.prepare("SELECT * FROM claim_outcomes ORDER BY ts ASC").all() as any[]);
+
+    return rows.map((row) => ({
+      id: row.id,
+      ts: row.ts,
+      project_id: row.project_id,
+      related_event_ids: JSON.parse(row.related_event_ids_json),
+      related_claim_ids: row.related_claim_ids_json
+        ? JSON.parse(row.related_claim_ids_json)
+        : undefined,
+      outcome_type: row.outcome_type,
+      strength: row.strength,
+      notes: row.notes ?? undefined,
+    }));
+  }
+
+  findActiveSingletonClaims(projectId: string, canonicalKey: string, scopeJson: string | null): Claim[] {
+    const rows = this.db
+      .prepare(`
+        SELECT * FROM claims
+        WHERE project_id = ?
+          AND canonical_key = ?
+          AND cardinality = 'singleton'
+          AND status = 'active'
+          AND (
+            (scope_json IS NULL AND ? IS NULL)
+            OR scope_json = ?
+          )
+        ORDER BY created_at ASC
+      `)
+      .all(projectId, canonicalKey, scopeJson, scopeJson) as any[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      created_at: row.created_at,
+      project_id: row.project_id,
+      type: row.type,
+      assertion_kind: row.assertion_kind,
+      canonical_key: row.canonical_key,
+      cardinality: row.cardinality,
+      content: row.content,
+      source_event_ids: JSON.parse(row.source_event_ids_json),
+      confidence: row.confidence,
+      importance: row.importance,
+      outcome_score: row.outcome_score,
+      verification_status: row.verification_status,
+      verification_method: row.verification_method ?? undefined,
+      status: row.status,
+      pinned: Boolean(row.pinned),
+      valid_from: row.valid_from ?? undefined,
+      valid_to: row.valid_to ?? undefined,
+      supersedes: row.supersedes_json ? JSON.parse(row.supersedes_json) : undefined,
+      last_verified_at: row.last_verified_at ?? undefined,
+      last_activated_at: row.last_activated_at ?? undefined,
+      scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
+      thread_status: row.thread_status ?? undefined,
+      resolved_at: row.resolved_at ?? undefined,
+      resolution_rules: row.resolution_rules_json
+        ? JSON.parse(row.resolution_rules_json)
+        : undefined,
+    }));
+  }
+
+  supersedeClaim(oldClaimId: string, newClaimId: string, reason: string, triggerType: string, actor: string): void {
+    const existing = this.db
+      .prepare("SELECT project_id, status, supersedes_json FROM claims WHERE id = ?")
+      .get(oldClaimId) as
+      | { project_id: string; status: string; supersedes_json: string | null }
+      | undefined;
+
+    if (!existing) return;
+
+    const supersedes = existing.supersedes_json
+      ? (JSON.parse(existing.supersedes_json) as string[])
+      : [];
+    if (!supersedes.includes(newClaimId)) supersedes.push(newClaimId);
+
+    const updateStmt = this.db.prepare(`
+      UPDATE claims
+      SET status = 'superseded',
+          supersedes_json = ?
+      WHERE id = ?
+    `);
+
+    updateStmt.run(JSON.stringify(supersedes), oldClaimId);
+
+    const insertTransition = this.db.prepare(`
+      INSERT OR REPLACE INTO claim_transitions (
+        id, ts, project_id, claim_id, from_status, to_status, reason, trigger_type, trigger_ref, actor
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertTransition.run(
+      `trn-${oldClaimId}-${newClaimId}`,
+      nowIso(),
+      existing.project_id,
+      oldClaimId,
+      existing.status,
+      "superseded",
+      reason,
+      triggerType,
+      newClaimId,
+      actor
+    );
   }
 
   getStats(): RuntimeStats {
