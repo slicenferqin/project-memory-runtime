@@ -1,0 +1,12 @@
+{
+  "name": "@slicenferqin/project-memory-runtime-benchmarks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "benchmark": "pnpm --filter @slicenferqin/project-memory-runtime-core build && node ./run-runtime-benchmarks.mjs"
+  },
+  "dependencies": {
+    "@slicenferqin/project-memory-runtime-core": "workspace:*"
+  }
+}

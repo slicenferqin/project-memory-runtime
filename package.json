@@ -8,11 +8,17 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "build": "pnpm --filter @slicenferqin/project-memory-runtime-core build",
-    "test": "pnpm run typecheck && pnpm --filter @slicenferqin/project-memory-runtime-core test",
+    "benchmark:runtime": "pnpm --filter @slicenferqin/project-memory-runtime-benchmarks benchmark",
+    "test": "pnpm run typecheck && pnpm run lint && pnpm --filter @slicenferqin/project-memory-runtime-core test",
     "typecheck": "pnpm --filter @slicenferqin/project-memory-runtime-core typecheck",
-    "lint": "echo \"Lint pipeline pending\""
+    "lint": "pnpm exec eslint packages/runtime/src packages/runtime/tests tools/benchmarks --max-warnings=0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "eslint": "^10.0.3",
+    "globals": "^17.4.0",
     "typescript": "^5.6.3"
   }
 }

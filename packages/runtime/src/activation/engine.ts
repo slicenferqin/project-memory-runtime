@@ -13,7 +13,7 @@ const DEFAULT_WEIGHTS = {
   freshness: 0.1,
   confidence: 0.25,
   importance: 0.05,
-  outcome: 0.0,
+  outcome: 0.15,
   scope: 0.3,
   pinBonus: 0.2,
 } as const;

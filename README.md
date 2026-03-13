@@ -7,7 +7,7 @@
 简体中文 | [English](./README_EN.md)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
-[![Status: Design Freeze](https://img.shields.io/badge/Status-Design%20Freeze-orange)](./docs/planning/contract-index.md)
+[![Status: Phase%201%20Baseline](https://img.shields.io/badge/Status-Phase%201%20Baseline-orange)](./docs/planning/phase-1-implementation-plan.md)
 [![Architecture: Runtime First](https://img.shields.io/badge/Architecture-Runtime%20First-black)](./docs/planning/2026-03-12-project-memory-kernel-design-v2.md)
 
 [为什么是它](#为什么是它) • [核心原则](#核心原则) • [仓库结构](#仓库结构) • [当前阶段](#当前阶段) • [从哪里开始读](#从哪里开始读)
@@ -119,23 +119,25 @@ project-memory-runtime/
 
 ## 当前阶段
 
-当前仓库仍处于 **design freeze / contract freeze** 阶段。
+当前仓库已经完成 **Phase 1 runtime baseline**，包括：
 
-现在最重要的事情不是继续扩写愿景，而是冻结实现契约：
+- SQLite-backed ledger / claim / outcome / activation log 基础存储
+- deterministic compiler baseline
+- lifecycle + outcome loop baseline
+- activation + recall baseline
+- runtime-only benchmark harness
 
-- identity / scope
-- state machine
-- schema
-- adapter boundary
-- evaluation protocol
-- compiler / ingestion rules
+当前工作的重点不再是继续扩写 contract，而是：
 
-Phase 1 的目标会是：
+- 继续 harden runtime invariants
+- 扩充更高价值 claim families
+- 让 benchmark 结果稳定可复现
+- 在 runtime 足够稳之后再接 Claude Code reference adapter
 
-- 跑通最短闭环
-- 建 SQLite ledger / claim / outcome 基础表
-- 建 runtime 骨架
-- 先做 Claude Code reference adapter
+目前最常用的本地验证入口：
+
+- `pnpm run test`
+- `pnpm run benchmark:runtime`
 
 ---
 

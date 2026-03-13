@@ -520,3 +520,124 @@ test("runtime enforces active singleton invariant for compatible scopes", async 
 
   runtime.close();
 });
+
+test("runtime search ranking reflects outcome-backed promotion and demotion", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-outcome-ranking-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
+  runtime.initialize();
+
+  admin.insertClaimRecord({
+    id: "clm-neutral",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.backend.neutral",
+    cardinality: "singleton",
+    content: "Use neutral backend strategy",
+    source_event_ids: ["evt-neutral"],
+    confidence: 0.8,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "system_verified",
+    status: "active",
+  });
+
+  admin.insertClaimRecord({
+    id: "clm-negative",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.backend.negative",
+    cardinality: "singleton",
+    content: "Use JSON backend strategy",
+    source_event_ids: ["evt-negative"],
+    confidence: 0.8,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "system_verified",
+    status: "active",
+  });
+
+  admin.insertClaimRecord({
+    id: "clm-positive",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.backend.positive",
+    cardinality: "singleton",
+    content: "Use SQLite backend strategy",
+    source_event_ids: ["evt-positive"],
+    confidence: 0.8,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "system_verified",
+    status: "active",
+  });
+
+  const baseline = runtime.searchClaims({
+    project_id: "github.com/acme/demo",
+    query: "backend strategy",
+    scope: {},
+    limit: 10,
+  });
+
+  const baselineOrder = baseline.active_claims.map((claim) => claim.id);
+  const baselinePositiveRank = baselineOrder.indexOf("clm-positive");
+  const baselineNegativeRank = baselineOrder.indexOf("clm-negative");
+
+  admin.insertOutcomeRecord({
+    id: "out-positive-1",
+    ts: "2026-03-12T01:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    related_event_ids: ["evt-positive-outcome"],
+    related_claim_ids: ["clm-positive"],
+    outcome_type: "test_pass",
+    strength: 1,
+  });
+  admin.insertOutcomeRecord({
+    id: "out-positive-2",
+    ts: "2026-03-12T01:10:00.000Z",
+    project_id: "github.com/acme/demo",
+    related_event_ids: ["evt-positive-outcome-2"],
+    related_claim_ids: ["clm-positive"],
+    outcome_type: "commit_kept",
+    strength: 1,
+  });
+  admin.insertOutcomeRecord({
+    id: "out-negative-1",
+    ts: "2026-03-12T01:20:00.000Z",
+    project_id: "github.com/acme/demo",
+    related_event_ids: ["evt-negative-outcome"],
+    related_claim_ids: ["clm-negative"],
+    outcome_type: "manual_override",
+    strength: 1,
+  });
+
+  const afterOutcomes = runtime.searchClaims({
+    project_id: "github.com/acme/demo",
+    query: "backend strategy",
+    scope: {},
+    limit: 10,
+  });
+
+  const outcomeOrder = afterOutcomes.active_claims.map((claim) => claim.id);
+  const positiveRank = outcomeOrder.indexOf("clm-positive");
+  const neutralRank = outcomeOrder.indexOf("clm-neutral");
+  const negativeRank = outcomeOrder.indexOf("clm-negative");
+
+  assert.ok(positiveRank !== -1);
+  assert.ok(neutralRank !== -1);
+  assert.ok(negativeRank !== -1);
+  assert.ok(positiveRank < neutralRank);
+  assert.ok(neutralRank < negativeRank);
+  assert.ok(positiveRank < baselinePositiveRank);
+  assert.ok(negativeRank > baselineNegativeRank);
+
+  runtime.close();
+});
