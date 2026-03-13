@@ -325,7 +325,7 @@ V1 期望最小命令：
 
 ## 15. 参考资料
 
-- [schema-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/schema-v1.md)
-- [Persistent Project Memory Kernel V2](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-project-memory-kernel-design-v2.md)
+- [schema-v1.md](./schema-v1.md)
+- [Persistent Project Memory Kernel V2](./2026-03-12-project-memory-kernel-design-v2.md)
 - [Claude Code Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks)
 - [Claude Code MCP](https://docs.anthropic.com/en/docs/claude-code/mcp)

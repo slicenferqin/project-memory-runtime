@@ -641,3 +641,100 @@ test("runtime search ranking reflects outcome-backed promotion and demotion", as
 
   runtime.close();
 });
+
+test("runtime extracts high-value hinted claim families deterministically", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-family-hints-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+
+  runtime.recordEvent({
+    id: "evt-strategy",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Current strategy is to stabilize Windows install path handling first",
+    metadata: {
+      memory_hints: {
+        family_hint: "current_strategy",
+        canonical_key_hint: "windows.install",
+      },
+    },
+  });
+
+  runtime.recordEvent({
+    id: "evt-blocker",
+    ts: "2026-03-12T00:00:01.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "agent_message",
+    content: "Windows path normalization is blocking reliable install tests",
+    metadata: {
+      memory_hints: {
+        family_hint: "blocker",
+        canonical_key_hint: "windows.install",
+      },
+    },
+  });
+
+  runtime.recordEvent({
+    id: "evt-rejected",
+    ts: "2026-03-12T00:00:02.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Do not go back to JSON-based persistence",
+    metadata: {
+      memory_hints: {
+        family_hint: "rejected_strategy",
+        canonical_key_hint: "persistence.backend",
+      },
+    },
+  });
+
+  runtime.recordEvent({
+    id: "evt-question",
+    ts: "2026-03-12T00:00:03.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "agent_message",
+    content: "Should path normalization happen before or after package extraction?",
+    metadata: {
+      memory_hints: {
+        family_hint: "open_question",
+        canonical_key_hint: "windows.install.order",
+      },
+    },
+  });
+
+  const claims = runtime.listClaims("github.com/acme/demo");
+  assert.ok(
+    claims.some((claim) => claim.canonical_key === "decision.current_strategy.windows.install")
+  );
+  assert.ok(claims.some((claim) => claim.canonical_key === "thread.blocker.windows.install"));
+  assert.ok(
+    claims.some((claim) => claim.canonical_key === "decision.rejected_strategy.persistence.backend")
+  );
+  assert.ok(
+    claims.some((claim) => claim.canonical_key === "thread.open_question.windows.install.order")
+  );
+
+  const brief = runtime.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    scope: {},
+  });
+  assert.ok(
+    brief.active_claims.some((claim) => claim.canonical_key === "decision.current_strategy.windows.install")
+  );
+  assert.ok(
+    brief.open_threads.some((claim) => claim.canonical_key === "thread.blocker.windows.install")
+  );
+
+  runtime.close();
+});

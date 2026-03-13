@@ -1,0 +1,10 @@
+{
+  "name": "@slicenferqin/project-memoryctl",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cli": "pnpm --filter @slicenferqin/project-memory-runtime-core build && node ./cli.mjs",
+    "test": "pnpm --filter @slicenferqin/project-memory-runtime-core build && node --test tests/*.test.mjs"
+  }
+}

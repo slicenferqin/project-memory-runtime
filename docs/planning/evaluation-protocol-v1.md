@@ -280,5 +280,5 @@ V1 建议输出：
 
 ## 14. 参考资料
 
-- [schema-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/schema-v1.md)
-- [Persistent Project Memory Kernel V2](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-project-memory-kernel-design-v2.md)
+- [schema-v1.md](./schema-v1.md)
+- [Persistent Project Memory Kernel V2](./2026-03-12-project-memory-kernel-design-v2.md)

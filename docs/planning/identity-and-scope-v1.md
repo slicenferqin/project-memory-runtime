@@ -496,4 +496,4 @@ branch 不参与 `project_id` 生成，但参与 scope。
 - [Mem0 OpenMemory Overview](https://docs.mem0.ai/openmemory/overview)
 - [git-worktree](https://git-scm.com/docs/git-worktree)
 - [git glossary](https://git-scm.com/docs/gitglossary/2.48.0)
-- [Persistent Project Memory Kernel V2](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-project-memory-kernel-design-v2.md)
+- [Persistent Project Memory Kernel V2](./2026-03-12-project-memory-kernel-design-v2.md)

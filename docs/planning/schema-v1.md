@@ -10,8 +10,8 @@
 
 本文件依赖：
 
-- [identity-and-scope-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/identity-and-scope-v1.md)
-- [state-machine-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/state-machine-v1.md)
+- [identity-and-scope-v1.md](./identity-and-scope-v1.md)
+- [state-machine-v1.md](./state-machine-v1.md)
 
 ---
 
@@ -557,6 +557,6 @@ V1 最小表集：
 
 ## 12. 参考资料
 
-- [identity-and-scope-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/identity-and-scope-v1.md)
-- [state-machine-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/state-machine-v1.md)
-- [Persistent Project Memory Kernel V2](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-project-memory-kernel-design-v2.md)
+- [identity-and-scope-v1.md](./identity-and-scope-v1.md)
+- [state-machine-v1.md](./state-machine-v1.md)
+- [Persistent Project Memory Kernel V2](./2026-03-12-project-memory-kernel-design-v2.md)

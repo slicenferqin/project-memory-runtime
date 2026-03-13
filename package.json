@@ -9,9 +9,10 @@
   "scripts": {
     "build": "pnpm --filter @slicenferqin/project-memory-runtime-core build",
     "benchmark:runtime": "pnpm --filter @slicenferqin/project-memory-runtime-benchmarks benchmark",
-    "test": "pnpm run typecheck && pnpm run lint && pnpm --filter @slicenferqin/project-memory-runtime-core test",
+    "memoryctl": "pnpm --filter @slicenferqin/project-memoryctl cli",
+    "test": "pnpm run typecheck && pnpm run lint && pnpm --filter @slicenferqin/project-memory-runtime-core test && pnpm --filter @slicenferqin/project-memoryctl test",
     "typecheck": "pnpm --filter @slicenferqin/project-memory-runtime-core typecheck",
-    "lint": "pnpm exec eslint packages/runtime/src packages/runtime/tests tools/benchmarks --max-warnings=0"
+    "lint": "pnpm exec eslint packages/runtime/src packages/runtime/tests tools/benchmarks tools/memoryctl --max-warnings=0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

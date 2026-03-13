@@ -286,7 +286,7 @@ V1 默认：
 
 ## 15. 参考资料
 
-- [identity-and-scope-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/identity-and-scope-v1.md)
-- [state-machine-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/state-machine-v1.md)
-- [schema-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/schema-v1.md)
-- [adapter-contract-v1.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/adapter-contract-v1.md)
+- [identity-and-scope-v1.md](./identity-and-scope-v1.md)
+- [state-machine-v1.md](./state-machine-v1.md)
+- [schema-v1.md](./schema-v1.md)
+- [adapter-contract-v1.md](./adapter-contract-v1.md)

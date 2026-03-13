@@ -12,9 +12,10 @@
 2. [state-machine-v1.md](./state-machine-v1.md)
 3. [schema-v1.md](./schema-v1.md)
 4. [activation-spec-v1.md](./activation-spec-v1.md)
-5. [adapter-contract-v1.md](./adapter-contract-v1.md)
-6. [evaluation-protocol-v1.md](./evaluation-protocol-v1.md)
-7. [compiler-and-ingestion-v1.md](./compiler-and-ingestion-v1.md)
+5. [claim-family-registry-v1.md](./claim-family-registry-v1.md)
+6. [adapter-contract-v1.md](./adapter-contract-v1.md)
+7. [evaluation-protocol-v1.md](./evaluation-protocol-v1.md)
+8. [compiler-and-ingestion-v1.md](./compiler-and-ingestion-v1.md)
 
 ---
 
@@ -27,12 +28,15 @@ graph TD
   state --> schema
   schema --> activation["activation-spec-v1"]
   identity --> activation
+  compiler --> registry["claim-family-registry-v1"]
   schema --> adapter["adapter-contract-v1"]
   schema --> eval["evaluation-protocol-v1"]
   identity --> compiler["compiler-and-ingestion-v1"]
   state --> compiler
   schema --> compiler
   activation --> compiler
+  schema --> registry
+  activation --> registry
   adapter --> compiler
   compiler --> impl["phase-1-implementation-plan"]
   eval --> impl
@@ -68,6 +72,12 @@ graph TD
   - eligibility filter
   - ranking
   - packing
+
+- `claim-family-registry-v1`
+  - family inventory
+  - key patterns
+  - deterministic extractor entrypoints
+  - lifecycle defaults
 
 - `evaluation-protocol-v1`
   - benchmark

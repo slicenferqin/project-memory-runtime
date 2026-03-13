@@ -150,9 +150,10 @@ project-memory-runtime/
 3. [Identity And Scope v1](./docs/planning/identity-and-scope-v1.md)
 4. [State Machine v1](./docs/planning/state-machine-v1.md)
 5. [Schema v1](./docs/planning/schema-v1.md)
-6. [Adapter Contract v1](./docs/planning/adapter-contract-v1.md)
-7. [Evaluation Protocol v1](./docs/planning/evaluation-protocol-v1.md)
-8. [Compiler And Ingestion v1](./docs/planning/compiler-and-ingestion-v1.md)
+6. [Claim Family Registry v1](./docs/planning/claim-family-registry-v1.md)
+7. [Adapter Contract v1](./docs/planning/adapter-contract-v1.md)
+8. [Evaluation Protocol v1](./docs/planning/evaluation-protocol-v1.md)
+9. [Compiler And Ingestion v1](./docs/planning/compiler-and-ingestion-v1.md)
 
 ---
 

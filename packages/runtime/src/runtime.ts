@@ -4,6 +4,8 @@ import type {
   Claim,
   ClaimStatus,
   ClaimTransition,
+  ExplainClaimResult,
+  MarkClaimStaleInput,
   NormalizedEvent,
   Outcome,
   OutcomeType,
@@ -15,6 +17,7 @@ import type {
   RuntimeStats,
   SearchClaimsInput,
   SessionBriefInput,
+  VerifyClaimInput,
 } from "./types.js";
 import { buildIngestionArtifacts } from "./ingestion/service.js";
 import { buildRecallPacket } from "./recall/packet.js";
@@ -227,6 +230,11 @@ export class ProjectMemoryRuntime {
     return this.storage.listActivationLogs(projectId);
   }
 
+  getClaim(claimId: string): Claim | undefined {
+    this.initialize();
+    return this.storage.getClaimById(claimId);
+  }
+
   buildSessionBrief(input: SessionBriefInput): RecallPacket {
     this.initialize();
     const claims = this.storage.listClaims(input.project_id);
@@ -318,6 +326,98 @@ export class ProjectMemoryRuntime {
     }
 
     return changed;
+  }
+
+  verifyClaim(input: VerifyClaimInput): Claim | undefined {
+    this.initialize();
+    const claim = this.storage.getClaimById(input.claim_id);
+    if (!claim) return undefined;
+
+    const ts = input.ts ?? nowIso();
+    const updated: Claim = {
+      ...claim,
+      verification_status: input.status,
+      verification_method: input.method,
+      last_verified_at:
+        input.status === "disputed" ? claim.last_verified_at : ts,
+    };
+
+    this.storage.transact(() => {
+      this.storage.upsertClaim(updated);
+
+      if (claim.status === "stale" && input.status !== "disputed") {
+        this.storage.insertClaimTransition(
+          buildTransition(
+            claim,
+            "active",
+            `re-verified by ${input.method}`,
+            "verify_claim",
+            claim.id,
+            input.actor ?? "operator"
+          )
+        );
+        updated.status = "active";
+        this.storage.upsertClaim(updated);
+      }
+    });
+
+    return updated;
+  }
+
+  markClaimStale(input: MarkClaimStaleInput): Claim | undefined {
+    this.initialize();
+    const claim = this.storage.getClaimById(input.claim_id);
+    if (!claim) return undefined;
+    if (claim.status === "stale") return claim;
+
+    const updated: Claim = {
+      ...claim,
+      status: "stale",
+    };
+
+    this.storage.transact(() => {
+      this.storage.upsertClaim(updated);
+      this.storage.insertClaimTransition(
+        buildTransition(
+          claim,
+          "stale",
+          input.reason,
+          "mark_claim_stale",
+          claim.id,
+          input.actor ?? "operator"
+        )
+      );
+    });
+
+    return updated;
+  }
+
+  explainClaim(claimId: string): ExplainClaimResult | undefined {
+    this.initialize();
+    const claim = this.storage.getClaimById(claimId);
+    if (!claim) return undefined;
+
+    const sourceEventIds = new Set(claim.source_event_ids);
+    const transitions = this.storage
+      .listClaimTransitions(claim.project_id)
+      .filter((entry) => entry.claim_id === claim.id);
+    const activationLogs = this.storage
+      .listActivationLogs(claim.project_id)
+      .filter((entry) => entry.claim_id === claim.id);
+    const relatedOutcomes = this.storage
+      .listOutcomes(claim.project_id)
+      .filter(
+        (outcome) =>
+          outcome.related_claim_ids?.includes(claim.id) ||
+          outcome.related_event_ids.some((eventId) => sourceEventIds.has(eventId))
+      );
+
+    return {
+      claim,
+      transitions,
+      activation_logs: activationLogs,
+      related_outcomes: relatedOutcomes,
+    };
   }
 
   private applyOutcome(outcome: Outcome): void {

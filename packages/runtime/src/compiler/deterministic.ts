@@ -6,6 +6,7 @@ interface MemoryHints {
   canonical_key_hint?: string;
   scope_hint?: ClaimScope;
   claim_type_hint?: Claim["type"];
+  family_hint?: "current_strategy" | "blocker" | "rejected_strategy" | "open_question";
 }
 
 function hashId(...parts: string[]): string {
@@ -146,6 +147,7 @@ function buildDecisionFromConfirmation(event: NormalizedEvent): Claim | null {
   if (event.event_type !== "user_confirmation") return null;
 
   const hints = (event.metadata?.memory_hints ?? {}) as MemoryHints;
+  if (hints.family_hint) return null;
   const hintKey = asString(hints.canonical_key_hint);
   const content = asString(event.metadata?.decision_content) ?? event.content;
   const canonicalKey = hintKey ?? `decision.confirmed.${slugify(content)}`;
@@ -160,6 +162,94 @@ function buildDecisionFromConfirmation(event: NormalizedEvent): Claim | null {
     confidence: 0.95,
     importance: 0.8,
     scope: hints.scope_hint ?? eventScopeToClaimScope(event),
+  });
+}
+
+function hintedFamilyCanonicalKey(
+  family: NonNullable<MemoryHints["family_hint"]>,
+  canonicalKeyHint: string | undefined,
+  content: string
+): string {
+  const suffix = canonicalKeyHint ?? slugify(content);
+
+  switch (family) {
+    case "current_strategy":
+      return `decision.current_strategy.${suffix}`;
+    case "blocker":
+      return `thread.blocker.${suffix}`;
+    case "rejected_strategy":
+      return `decision.rejected_strategy.${suffix}`;
+    case "open_question":
+      return `thread.open_question.${suffix}`;
+  }
+}
+
+function buildHintedFamilyClaim(event: NormalizedEvent): Claim | null {
+  const hints = (event.metadata?.memory_hints ?? {}) as MemoryHints;
+  if (!hints.family_hint) return null;
+
+  const content = asString(event.metadata?.claim_content) ?? event.content;
+  const canonicalKey = hintedFamilyCanonicalKey(
+    hints.family_hint,
+    asString(hints.canonical_key_hint),
+    content
+  );
+  const scope = hints.scope_hint ?? eventScopeToClaimScope(event);
+
+  if (hints.family_hint === "current_strategy") {
+    return buildBaseClaim(event, {
+      type: "decision",
+      canonicalKey,
+      content,
+      assertionKind: "instruction",
+      verificationStatus: event.event_type === "user_confirmation" ? "user_confirmed" : "inferred",
+      verificationMethod: event.event_type === "user_confirmation" ? "user_confirmation" : "memory_hint",
+      confidence: event.event_type === "user_confirmation" ? 0.95 : 0.8,
+      importance: 0.9,
+      scope,
+    });
+  }
+
+  if (hints.family_hint === "rejected_strategy") {
+    return buildBaseClaim(event, {
+      type: "decision",
+      canonicalKey,
+      content,
+      assertionKind: "instruction",
+      verificationStatus: event.event_type === "user_confirmation" ? "user_confirmed" : "inferred",
+      verificationMethod: event.event_type === "user_confirmation" ? "user_confirmation" : "memory_hint",
+      confidence: event.event_type === "user_confirmation" ? 0.9 : 0.75,
+      importance: 0.88,
+      scope,
+    });
+  }
+
+  if (hints.family_hint === "blocker") {
+    return buildBaseClaim(event, {
+      type: "thread",
+      canonicalKey,
+      content,
+      assertionKind: "todo",
+      verificationStatus: "inferred",
+      verificationMethod: "memory_hint",
+      confidence: 0.8,
+      importance: 0.92,
+      scope,
+      threadStatus: "open",
+    });
+  }
+
+  return buildBaseClaim(event, {
+    type: "thread",
+    canonicalKey,
+    content,
+    assertionKind: "todo",
+    verificationStatus: "inferred",
+    verificationMethod: "memory_hint",
+    confidence: 0.78,
+    importance: 0.82,
+    scope,
+    threadStatus: "open",
   });
 }
 
@@ -348,6 +438,9 @@ export function extractDeterministicArtifacts(
 
   const negativeDecision = buildNegativeMemoryDecision(event);
   if (negativeDecision) claims.push(negativeDecision);
+
+  const hintedFamilyClaim = buildHintedFamilyClaim(event);
+  if (hintedFamilyClaim) claims.push(hintedFamilyClaim);
 
   const outcome = buildOutcome(event);
   if (outcome) outcomes.push(outcome);

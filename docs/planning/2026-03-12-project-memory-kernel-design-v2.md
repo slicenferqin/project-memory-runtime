@@ -906,7 +906,6 @@ V2 完成后，建议下一步直接产出：
 
 ### 评审输入
 
-- [2026-03-12-project-memory-kernel-design.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-project-memory-kernel-design.md)
-- [2026-03-12-project-memory-kernel-design-review-claude.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-project-memory-kernel-design-review-claude.md)
-- [TabAI会话_1773305094470.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/TabAI会话_1773305094470.md)
-- [TabAI会话_1773305625429.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/TabAI会话_1773305625429.md)
+- [2026-03-12-design-v2-claude-review.md](../reviews/2026-03-12-design-v2-claude-review.md)
+- [2026-03-12-design-v2-gemini-review.md](../reviews/2026-03-12-design-v2-gemini-review.md)
+- [2026-03-12-design-v2-gpt-review.md](../reviews/2026-03-12-design-v2-gpt-review.md)

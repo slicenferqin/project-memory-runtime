@@ -254,3 +254,25 @@ export interface RuntimeAdminApi {
   insertClaimRecord(claim: Claim): void;
   insertOutcomeRecord(outcome: Outcome): void;
 }
+
+export interface VerifyClaimInput {
+  claim_id: string;
+  status: "system_verified" | "user_confirmed" | "disputed";
+  method: string;
+  ts?: string;
+  actor?: string;
+}
+
+export interface MarkClaimStaleInput {
+  claim_id: string;
+  reason: string;
+  ts?: string;
+  actor?: string;
+}
+
+export interface ExplainClaimResult {
+  claim: Claim;
+  transitions: ClaimTransition[];
+  activation_logs: ActivationLog[];
+  related_outcomes: Outcome[];
+}

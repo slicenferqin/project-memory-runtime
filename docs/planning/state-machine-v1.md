@@ -363,6 +363,6 @@ V1 冻结为：
 
 ## 14. 参考资料
 
-- [Persistent Project Memory Kernel V2](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-project-memory-kernel-design-v2.md)
-- [2026-03-12-design-v2-claude-review.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-design-v2-claude-review.md)
-- [2026-03-12-design-v2-gpt-review.md](/Users/slicenfer/Development/projects/self/universal-memory-mcp/docs/planning/2026-03-12-design-v2-gpt-review.md)
+- [Persistent Project Memory Kernel V2](./2026-03-12-project-memory-kernel-design-v2.md)
+- [2026-03-12-design-v2-claude-review.md](../reviews/2026-03-12-design-v2-claude-review.md)
+- [2026-03-12-design-v2-gpt-review.md](../reviews/2026-03-12-design-v2-gpt-review.md)

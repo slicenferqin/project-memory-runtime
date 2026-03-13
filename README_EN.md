@@ -7,7 +7,7 @@
 [简体中文](./README.md) | English
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
-[![Status: Design Freeze](https://img.shields.io/badge/Status-Design%20Freeze-orange)](./docs/planning/contract-index.md)
+[![Status: Phase%201%20Baseline](https://img.shields.io/badge/Status-Phase%201%20Baseline-orange)](./docs/planning/phase-1-implementation-plan.md)
 [![Architecture: Runtime First](https://img.shields.io/badge/Architecture-Runtime%20First-black)](./docs/planning/2026-03-12-project-memory-kernel-design-v2.md)
 
 [Why](#why) • [Principles](#principles) • [Structure](#repository-structure) • [Status](#current-status) • [Start Here](#start-here)
@@ -87,23 +87,20 @@ project-memory-runtime/
 
 ## Current Status
 
-This repository is currently in **design freeze / contract freeze** mode.
+This repository has completed the **Phase 1 runtime baseline**, including:
 
-The immediate goal is to stabilize the implementation contracts for:
+- SQLite-backed ledger / claim / outcome / activation log storage
+- deterministic compiler baseline
+- lifecycle + outcome loop baseline
+- activation + recall baseline
+- runtime-only benchmark harness
 
-- identity and scope
-- claim lifecycle
-- schema
-- adapter boundaries
-- evaluation protocol
-- compiler and ingestion rules
+The current focus is no longer expanding contracts, but:
 
-Phase 1 will aim to:
-
-- validate the shortest runtime loop
-- define the SQLite ledger / claim / outcome base tables
-- build the runtime skeleton
-- implement a first Claude Code reference adapter
+- hardening runtime invariants
+- expanding high-value claim families
+- making benchmark results reproducible
+- only then wiring the first Claude Code reference adapter
 
 ---
 
@@ -116,9 +113,10 @@ Recommended reading order:
 3. [Identity And Scope v1](./docs/planning/identity-and-scope-v1.md)
 4. [State Machine v1](./docs/planning/state-machine-v1.md)
 5. [Schema v1](./docs/planning/schema-v1.md)
-6. [Adapter Contract v1](./docs/planning/adapter-contract-v1.md)
-7. [Evaluation Protocol v1](./docs/planning/evaluation-protocol-v1.md)
-8. [Compiler And Ingestion v1](./docs/planning/compiler-and-ingestion-v1.md)
+6. [Claim Family Registry v1](./docs/planning/claim-family-registry-v1.md)
+7. [Adapter Contract v1](./docs/planning/adapter-contract-v1.md)
+8. [Evaluation Protocol v1](./docs/planning/evaluation-protocol-v1.md)
+9. [Compiler And Ingestion v1](./docs/planning/compiler-and-ingestion-v1.md)
 
 ---
 
