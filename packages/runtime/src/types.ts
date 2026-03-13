@@ -149,6 +149,19 @@ export interface Outcome {
   notes?: string;
 }
 
+export interface ClaimTransition {
+  id: string;
+  ts: string;
+  project_id: string;
+  claim_id: string;
+  from_status?: ClaimStatus;
+  to_status: ClaimStatus;
+  reason: string;
+  trigger_type: string;
+  trigger_ref?: string;
+  actor: string;
+}
+
 export interface RuntimeConfig {
   dataDir?: string;
   dbPath?: string;

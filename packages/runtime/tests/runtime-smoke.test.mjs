@@ -145,3 +145,120 @@ test("runtime records deterministic fact, thread, decision and outcome artifacts
 
   runtime.close();
 });
+
+test("runtime applies positive and negative outcomes to claim lifecycle", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-lifecycle-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  runtime.initialize();
+
+  runtime.insertClaimRecord({
+    id: "clm-decision",
+    created_at: "2026-03-01T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.persistence.backend",
+    cardinality: "singleton",
+    content: "Use SQLite as backend",
+    source_event_ids: ["evt-seed"],
+    confidence: 0.9,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "user_confirmed",
+    status: "active",
+  });
+
+  runtime.insertOutcomeRecord({
+    id: "out-negative",
+    ts: "2026-03-02T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    related_event_ids: ["evt-override"],
+    related_claim_ids: ["clm-decision"],
+    outcome_type: "manual_override",
+    strength: 1,
+  });
+
+  let claim = runtime.listClaims("github.com/acme/demo").find((entry) => entry.id === "clm-decision");
+  assert.ok(claim);
+  assert.equal(claim.status, "stale");
+  assert.ok(claim.outcome_score < 0);
+
+  runtime.insertOutcomeRecord({
+    id: "out-positive",
+    ts: "2026-03-03T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    related_event_ids: ["evt-test-pass"],
+    related_claim_ids: ["clm-decision"],
+    outcome_type: "test_pass",
+    strength: 1,
+  });
+
+  claim = runtime.listClaims("github.com/acme/demo").find((entry) => entry.id === "clm-decision");
+  assert.ok(claim);
+  assert.equal(claim.status, "active");
+  assert.equal(claim.last_verified_at, "2026-03-03T00:00:00.000Z");
+
+  const transitions = runtime.listClaimTransitions("github.com/acme/demo");
+  assert.ok(transitions.some((entry) => entry.to_status === "stale"));
+  assert.ok(transitions.some((entry) => entry.to_status === "active"));
+
+  runtime.close();
+});
+
+test("runtime sweeps stale claims using last_verified_at or created_at", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-stale-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  runtime.initialize();
+
+  runtime.insertClaimRecord({
+    id: "clm-fact-old",
+    created_at: "2025-01-01T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "fact",
+    assertion_kind: "fact",
+    canonical_key: "repo.package_manager",
+    cardinality: "singleton",
+    content: "Repo uses pnpm",
+    source_event_ids: ["evt-old"],
+    confidence: 0.8,
+    importance: 0.7,
+    outcome_score: 0,
+    verification_status: "system_verified",
+    status: "active",
+  });
+
+  runtime.insertClaimRecord({
+    id: "clm-decision-recent",
+    created_at: "2025-01-01T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.runtime.mode",
+    cardinality: "singleton",
+    content: "Use runtime-first architecture",
+    source_event_ids: ["evt-decision"],
+    confidence: 0.9,
+    importance: 0.9,
+    outcome_score: 0,
+    verification_status: "system_verified",
+    status: "active",
+    last_verified_at: "2026-03-10T00:00:00.000Z",
+  });
+
+  const changed = runtime.sweepStaleClaims("2026-03-13T00:00:00.000Z");
+  assert.equal(changed, 1);
+
+  const claims = runtime.listClaims("github.com/acme/demo");
+  const oldFact = claims.find((entry) => entry.id === "clm-fact-old");
+  const recentDecision = claims.find((entry) => entry.id === "clm-decision-recent");
+  assert.ok(oldFact);
+  assert.ok(recentDecision);
+  assert.equal(oldFact.status, "stale");
+  assert.equal(recentDecision.status, "active");
+
+  runtime.close();
+});

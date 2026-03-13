@@ -3,6 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import {
   type Claim,
+  type ClaimTransition,
   type NormalizedEvent,
   type Outcome,
   type RuntimeConfig,
@@ -279,6 +280,40 @@ export class RuntimeStorage {
     }));
   }
 
+  getClaimById(claimId: string): Claim | undefined {
+    const row = this.db.prepare("SELECT * FROM claims WHERE id = ?").get(claimId) as any;
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      created_at: row.created_at,
+      project_id: row.project_id,
+      type: row.type,
+      assertion_kind: row.assertion_kind,
+      canonical_key: row.canonical_key,
+      cardinality: row.cardinality,
+      content: row.content,
+      source_event_ids: JSON.parse(row.source_event_ids_json),
+      confidence: row.confidence,
+      importance: row.importance,
+      outcome_score: row.outcome_score,
+      verification_status: row.verification_status,
+      verification_method: row.verification_method ?? undefined,
+      status: row.status,
+      pinned: Boolean(row.pinned),
+      valid_from: row.valid_from ?? undefined,
+      valid_to: row.valid_to ?? undefined,
+      supersedes: row.supersedes_json ? JSON.parse(row.supersedes_json) : undefined,
+      last_verified_at: row.last_verified_at ?? undefined,
+      last_activated_at: row.last_activated_at ?? undefined,
+      scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
+      thread_status: row.thread_status ?? undefined,
+      resolved_at: row.resolved_at ?? undefined,
+      resolution_rules: row.resolution_rules_json
+        ? JSON.parse(row.resolution_rules_json)
+        : undefined,
+    };
+  }
+
   findActiveSingletonClaims(projectId: string, canonicalKey: string, scopeJson: string | null): Claim[] {
     const rows = this.db
       .prepare(`
@@ -367,6 +402,43 @@ export class RuntimeStorage {
       newClaimId,
       actor
     );
+  }
+
+  insertClaimTransition(transition: ClaimTransition): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO claim_transitions (
+        id, ts, project_id, claim_id, from_status, to_status, reason, trigger_type, trigger_ref, actor
+      ) VALUES (
+        @id, @ts, @project_id, @claim_id, @from_status, @to_status, @reason, @trigger_type, @trigger_ref, @actor
+      )
+    `);
+
+    stmt.run({
+      ...transition,
+      from_status: nullable(transition.from_status),
+      trigger_ref: nullable(transition.trigger_ref),
+    });
+  }
+
+  listClaimTransitions(projectId?: string): ClaimTransition[] {
+    const rows = projectId
+      ? (this.db
+          .prepare("SELECT * FROM claim_transitions WHERE project_id = ? ORDER BY ts ASC")
+          .all(projectId) as any[])
+      : (this.db.prepare("SELECT * FROM claim_transitions ORDER BY ts ASC").all() as any[]);
+
+    return rows.map((row) => ({
+      id: row.id,
+      ts: row.ts,
+      project_id: row.project_id,
+      claim_id: row.claim_id,
+      from_status: row.from_status ?? undefined,
+      to_status: row.to_status,
+      reason: row.reason,
+      trigger_type: row.trigger_type,
+      trigger_ref: row.trigger_ref ?? undefined,
+      actor: row.actor,
+    }));
   }
 
   getStats(): RuntimeStats {

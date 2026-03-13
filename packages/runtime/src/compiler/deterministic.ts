@@ -65,6 +65,8 @@ function buildBaseClaim(
     confidence?: number;
     threadStatus?: Claim["thread_status"];
     resolutionRules?: ResolutionRule[];
+    status?: Claim["status"];
+    resolvedAt?: string;
   }
 ): Claim {
   const scope = normalizeScope(input.scope);
@@ -83,9 +85,10 @@ function buildBaseClaim(
     outcome_score: 0,
     verification_status: input.verificationStatus ?? "inferred",
     verification_method: input.verificationMethod,
-    status: "active",
+    status: input.status ?? "active",
     scope,
     thread_status: input.threadStatus,
+    resolved_at: input.resolvedAt,
     resolution_rules: input.resolutionRules,
   };
 }
@@ -195,6 +198,7 @@ function buildNegativeMemoryDecision(event: NormalizedEvent): Claim | null {
 
 function buildIssueThread(event: NormalizedEvent, issueId: string): Claim {
   const scope = eventScopeToClaimScope(event);
+  const resolved = event.event_type === "issue_closed";
   return buildBaseClaim(event, {
     type: "thread",
     canonicalKey: `thread.issue.${issueId}`,
@@ -203,7 +207,9 @@ function buildIssueThread(event: NormalizedEvent, issueId: string): Claim {
     scope,
     importance: 0.8,
     confidence: 0.9,
-    threadStatus: event.event_type === "issue_closed" ? "resolved" : "open",
+    threadStatus: resolved ? "resolved" : "open",
+    status: resolved ? "archived" : "active",
+    resolvedAt: resolved ? event.ts : undefined,
     resolutionRules: [{ type: "issue_closed", issue_id: issueId }],
   });
 }
