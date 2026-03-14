@@ -6,7 +6,7 @@ import type {
   RecallClaim,
   SuppressionReason,
 } from "../types.js";
-import { normalizeClaimScope, scopeSpecificity } from "../scope.js";
+import { normalizeClaimScope, scopeSignature, scopeSpecificity } from "../scope.js";
 
 const DEFAULT_WEIGHTS = {
   relevance: 0.1,
@@ -166,6 +166,7 @@ function filterClaim(
     projectId: string;
     scope?: ClaimScope;
     includeResolvedThreads?: boolean;
+    mode?: ActivateClaimsOptions["mode"];
   },
   now: string
 ): { eligible: true } | { eligible: false; reason: SuppressionReason } {
@@ -174,6 +175,9 @@ function filterClaim(
   if (claim.status === "archived") return { eligible: false, reason: "archived" };
   if (isExpired(claim, now)) return { eligible: false, reason: "expired" };
   if (claim.verification_status === "disputed") return { eligible: false, reason: "verification_guard" };
+  if (input.mode === "session_brief" && claim.verification_status === "unverified") {
+    return { eligible: false, reason: "verification_guard" };
+  }
   if (!scopeCompatible(claim.scope, input.scope)) return { eligible: false, reason: "scope_mismatch" };
   if (!input.includeResolvedThreads && claim.type === "thread" && claim.thread_status === "resolved") {
     return { eligible: false, reason: "archived" };
@@ -229,6 +233,7 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
         projectId: options.projectId,
         scope: options.scope,
         includeResolvedThreads: options.includeResolvedThreads ?? false,
+        mode: options.mode,
       },
       now
     );
@@ -281,6 +286,10 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
   ranked.sort((a, b) => {
     const bucketDelta = claimPriorityBucket(a.claim) - claimPriorityBucket(b.claim);
     if (bucketDelta !== 0) return bucketDelta;
+    const specificityDelta =
+      scopeSpecificity(normalizeClaimScope(b.claim.scope)) -
+      scopeSpecificity(normalizeClaimScope(a.claim.scope));
+    if (specificityDelta !== 0) return specificityDelta;
     return b.rankScore - a.rankScore;
   });
 
@@ -290,10 +299,14 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
   const seenCounts = new Map<string, number>();
 
   for (const entry of ranked) {
-    const key = `${entry.claim.canonical_key}:${JSON.stringify(entry.claim.scope ?? {})}`;
-    const currentCount = seenCounts.get(key) ?? 0;
+    const singletonSlot = entry.claim.canonical_key;
+    const countKey =
+      entry.claim.cardinality === "singleton"
+        ? singletonSlot
+        : `${entry.claim.canonical_key}:${scopeSignature(entry.claim.scope)}`;
+    const currentCount = seenCounts.get(countKey) ?? 0;
 
-    if (entry.claim.cardinality === "singleton" && seenSingletons.has(key)) {
+    if (entry.claim.cardinality === "singleton" && seenSingletons.has(singletonSlot)) {
       dropped.push({
         id: hashLogId("drp", options.projectId, entry.claim.id, "low_rank", now),
         ts: now,
@@ -341,8 +354,8 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
       activation_reasons: entry.activationReasons,
       evidence_refs: [...entry.claim.source_event_ids],
     });
-    seenCounts.set(key, currentCount + 1);
-    if (entry.claim.cardinality === "singleton") seenSingletons.add(key);
+    seenCounts.set(countKey, currentCount + 1);
+    if (entry.claim.cardinality === "singleton") seenSingletons.add(singletonSlot);
   }
 
   return { selected, dropped, filtered };

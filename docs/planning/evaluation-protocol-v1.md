@@ -184,6 +184,11 @@ Session recovery benchmark 的标准答案应来自以下二选一：
 - 同 repo 不同 worktree
 - 同 monorepo 不同 subproject
 
+当前实现说明：
+
+- runtime-only harness 可以先验证 shared-db / shared-project-id 一致性
+- clone / worktree / subproject 场景在 adapter 前仍需补专门 fixture 或集成套件
+
 ---
 
 ## 8. 解释性评估
@@ -259,6 +264,8 @@ runtime-only benchmark 约束：
 - 优先通过 `ledger_events -> compiler -> outcome link -> recall` 主闭环重放
 - 不得使用 admin/operator bypass 伪造核心语义
 - admin/operator 入口仅允许出现在独立 operator-integrated 套件
+- 若输出 delta，必须显式运行 baseline
+- outcome benchmark 应额外记录 memory growth / packet pollution 指标
 
 ---
 

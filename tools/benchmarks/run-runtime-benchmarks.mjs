@@ -43,6 +43,13 @@ function computeRecall(found, expected) {
   };
 }
 
+function eventText(event) {
+  return JSON.stringify({
+    content: event.content,
+    metadata: event.metadata ?? {},
+  }).toLowerCase();
+}
+
 function rankById(packet) {
   const ranks = new Map();
   packet.active_claims.forEach((claim, index) => ranks.set(claim.id, index));
@@ -54,6 +61,56 @@ function requireValue(value, message) {
     throw new Error(message);
   }
   return value;
+}
+
+function runNoMemorySessionRecoveryBaseline(expectedActive, expectedThreads) {
+  const runtime = createRuntime("pmr-bench-no-memory-");
+  const packet = runtime.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    agent_id: "no-memory-baseline",
+    scope: { branch: "fix/windows-install" },
+  });
+
+  const activeRecall = computeRecall(canonicalKeys(packet.active_claims), expectedActive);
+  const threadRecall = computeRecall(canonicalKeys(packet.open_threads), expectedThreads);
+  runtime.close();
+
+  return {
+    activeRecall,
+    threadRecall,
+  };
+}
+
+function runKeywordSessionRecoveryBaseline(runtime, expectedActive, expectedThreads) {
+  const events = runtime.listEvents("github.com/acme/demo");
+  const blobs = events.map(eventText);
+
+  const activeTerms = new Map([
+    ["repo.package_manager", ["pnpm"]],
+    ["repo.test_framework", ["vitest"]],
+    ["decision.avoid.decision.persistence.backend", ["json backend", "reverted"]],
+  ]);
+  const threadTerms = new Map([
+    ["thread.issue.42", ["issue #42"]],
+    ["thread.test.windows.install.path.normalizer", ["windows install path normalizer"]],
+    ["thread.branch.fix.windows.install", ["fix/windows-install"]],
+  ]);
+
+  const activeFound = expectedActive.filter((key) =>
+    (activeTerms.get(key) ?? []).every((term) =>
+      blobs.some((blob) => blob.includes(term))
+    )
+  );
+  const threadFound = expectedThreads.filter((key) =>
+    (threadTerms.get(key) ?? []).every((term) =>
+      blobs.some((blob) => blob.includes(term))
+    )
+  );
+
+  return {
+    activeRecall: computeRecall(activeFound, expectedActive),
+    threadRecall: computeRecall(threadFound, expectedThreads),
+  };
 }
 
 function runSessionRecoveryBenchmark() {
@@ -138,6 +195,8 @@ function runSessionRecoveryBenchmark() {
 
   const activeRecall = computeRecall(canonicalKeys(packet.active_claims), activeExpected);
   const threadRecall = computeRecall(canonicalKeys(packet.open_threads), threadExpected);
+  const noMemoryBaseline = runNoMemorySessionRecoveryBaseline(activeExpected, threadExpected);
+  const keywordBaseline = runKeywordSessionRecoveryBaseline(runtime, activeExpected, threadExpected);
   const pass = activeRecall.recall >= 0.66 && threadRecall.recall >= 0.8;
 
   runtime.close();
@@ -148,8 +207,18 @@ function runSessionRecoveryBenchmark() {
     metrics: {
       active_claim_recall: round(activeRecall.recall),
       open_thread_recall: round(threadRecall.recall),
-      active_claim_recall_delta_vs_no_memory: round(activeRecall.recall),
-      open_thread_recall_delta_vs_no_memory: round(threadRecall.recall),
+      active_claim_recall_delta_vs_no_memory: round(
+        activeRecall.recall - noMemoryBaseline.activeRecall.recall
+      ),
+      open_thread_recall_delta_vs_no_memory: round(
+        threadRecall.recall - noMemoryBaseline.threadRecall.recall
+      ),
+      active_claim_recall_delta_vs_keyword: round(
+        activeRecall.recall - keywordBaseline.activeRecall.recall
+      ),
+      open_thread_recall_delta_vs_keyword: round(
+        threadRecall.recall - keywordBaseline.threadRecall.recall
+      ),
       active_claim_hits: activeRecall.hits,
       open_thread_hits: threadRecall.hits,
     },
@@ -364,6 +433,19 @@ function runOutcomeLearningBenchmark() {
   }
 
   const finalRound = rounds[rounds.length - 1];
+  const allClaims = runtime.listClaims("github.com/acme/demo");
+  const avoidanceClaimHistoryCount = allClaims.filter((claim) =>
+    claim.canonical_key.startsWith("decision.avoid.")
+  ).length;
+  const avoidanceClaimGrowth = allClaims.filter(
+    (claim) =>
+      claim.canonical_key.startsWith("decision.avoid.") &&
+      claim.status !== "superseded" &&
+      claim.status !== "archived"
+  ).length;
+  const packetPollutionCount = (finalRound.order ?? []).filter((key) =>
+    key.startsWith("decision.avoid.")
+  ).length;
   const positiveDelta =
     requireValue(baselineRanks.get(positiveClaimId), "missing positive baseline rank") -
     requireValue(finalRound.positive_rank, "missing positive final rank");
@@ -374,6 +456,8 @@ function runOutcomeLearningBenchmark() {
     rounds.length === 3 &&
     rounds[0].positive_rank >= finalRound.positive_rank &&
     rounds[0].negative_rank <= finalRound.negative_rank &&
+    avoidanceClaimGrowth <= 1 &&
+    packetPollutionCount <= 1 &&
     positiveDelta > 0 &&
     negativeDelta > 0;
 
@@ -386,6 +470,9 @@ function runOutcomeLearningBenchmark() {
       positive_rank_delta: positiveDelta,
       negative_rank_delta: negativeDelta,
       rounds: rounds.length,
+      avoidance_claim_growth: avoidanceClaimGrowth,
+      avoidance_claim_history_count: avoidanceClaimHistoryCount,
+      packet_pollution_count: packetPollutionCount,
       final_positive_rank: finalRound.positive_rank,
       final_negative_rank: finalRound.negative_rank,
     },

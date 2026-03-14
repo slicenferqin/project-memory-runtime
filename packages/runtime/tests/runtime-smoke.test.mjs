@@ -50,7 +50,7 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
   });
 
   const stats = runtime.getStats();
-  assert.equal(stats.migrationsApplied, 2);
+  assert.equal(stats.migrationsApplied, 3);
   assert.equal(stats.events, 1);
   assert.equal(stats.claims, 1);
   assert.equal(stats.outcomes, 1);
@@ -555,6 +555,12 @@ test("runtime enforces active singleton invariant only within the same scope sig
     "decision.persistence.backend"
   );
   assert.equal(repoScopedSnapshot.active_claims[0]?.scope?.repo, "origin");
+  assert.equal(
+    repoScopedSnapshot.active_claims.filter(
+      (claim) => claim.canonical_key === "decision.persistence.backend"
+    ).length,
+    1
+  );
 
   runtime.close();
 });
@@ -746,9 +752,11 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     id: "evt-strategy",
     ts: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/demo",
-    agent_id: "claude-code",
+    agent_id: "user",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    source_kind: "user",
+    trust_level: "high",
     content: "Current strategy is to stabilize Windows install path handling first",
     metadata: {
       memory_hints: {
@@ -765,6 +773,8 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     agent_id: "user",
     agent_version: "unknown",
     event_type: "user_message",
+    source_kind: "user",
+    trust_level: "medium",
     content: "Windows path normalization is blocking reliable install tests",
     metadata: {
       memory_hints: {
@@ -778,9 +788,11 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     id: "evt-rejected",
     ts: "2026-03-12T00:00:02.000Z",
     project_id: "github.com/acme/demo",
-    agent_id: "claude-code",
+    agent_id: "user",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    source_kind: "user",
+    trust_level: "high",
     content: "Do not go back to JSON-based persistence",
     metadata: {
       memory_hints: {
@@ -797,6 +809,8 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     agent_id: "user",
     agent_version: "unknown",
     event_type: "user_message",
+    source_kind: "user",
+    trust_level: "medium",
     content: "Should path normalization happen before or after package extraction?",
     metadata: {
       memory_hints: {
@@ -827,7 +841,24 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     brief.active_claims.some((claim) => claim.canonical_key === "decision.current_strategy.windows.install")
   );
   assert.ok(
-    brief.open_threads.some((claim) => claim.canonical_key === "thread.blocker.windows.install")
+    !brief.open_threads.some((claim) => claim.canonical_key === "thread.blocker.windows.install")
+  );
+
+  const blockerClaim = claims.find((claim) => claim.canonical_key === "thread.blocker.windows.install");
+  assert.ok(blockerClaim);
+  runtime.verifyClaim({
+    claim_id: blockerClaim.id,
+    status: "system_verified",
+    method: "operator_review",
+  });
+
+  const verifiedBrief = runtime.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    scope: {},
+  });
+  assert.ok(
+    verifiedBrief.open_threads.some((claim) => claim.canonical_key === "thread.blocker.windows.install")
   );
 
   runtime.recordEvent({
@@ -837,6 +868,8 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "agent_message",
+    source_kind: "agent",
+    trust_level: "low",
     content: "Agent claims this is a blocker",
     metadata: {
       memory_hints: {

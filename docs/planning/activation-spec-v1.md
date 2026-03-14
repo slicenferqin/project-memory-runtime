@@ -150,8 +150,8 @@ rank_score =
 ### 7.1 默认理解
 
 - `scope_match` 是硬价值维度，不只是微调项
-- `w_o = 0.00` 在 v1 初始排序中不直接生效
-- 但 outcome 仍然影响 claim 生命周期、benchmark 与未来调参
+- `w_o = 0.15` 在当前 v1 baseline 中直接参与排序
+- outcome 同时影响 claim 生命周期、benchmark 与后续调参
 
 ### 7.2 V1 限定
 

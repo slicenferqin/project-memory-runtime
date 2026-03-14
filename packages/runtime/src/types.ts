@@ -29,6 +29,9 @@ export interface EventScope {
   files?: string[];
 }
 
+export type EventSourceKind = "user" | "agent" | "system" | "operator" | "imported";
+export type EventTrustLevel = "low" | "medium" | "high";
+
 export interface NormalizedEvent {
   id: string;
   ts: string;
@@ -42,6 +45,8 @@ export interface NormalizedEvent {
   repo_id?: string;
   parent_event_id?: string;
   causation_id?: string;
+  source_kind?: EventSourceKind;
+  trust_level?: EventTrustLevel;
   scope?: EventScope;
   metadata?: Record<string, unknown>;
 }

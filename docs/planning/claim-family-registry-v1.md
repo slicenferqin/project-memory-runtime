@@ -98,6 +98,19 @@ metadata.memory_hints = {
 - compiler 负责最终 key 组装
 - `family_hint` 不是 claim 直写后门
 
+V1 额外要求独立 provenance：
+
+```ts
+source_kind?: "user" | "agent" | "system" | "operator" | "imported"
+trust_level?: "low" | "medium" | "high"
+```
+
+解释：
+
+- runtime 不再把 `event_type` 当作 provenance
+- 是否接受 `family_hint`，由 `source_kind + trust_level + event_type` 共同决定
+- 缺少可信 provenance 的 hint 不产出 family claim
+
 V1 事件类型限制：
 
 - `decision.current_strategy`
@@ -105,9 +118,15 @@ V1 事件类型限制：
 - `decision.rejected_strategy`
   - 仅允许 `user_confirmation`
 - `thread.blocker`
-  - 仅允许 `user_message` / `user_confirmation`
+  - 仅允许 `source_kind=user` 且 `trust_level in {medium, high}` 的 `user_message` / `user_confirmation`
 - `thread.open_question`
-  - 仅允许 `user_message` / `user_confirmation`
+  - 仅允许 `source_kind=user` 且 `trust_level in {medium, high}` 的 `user_message` / `user_confirmation`
+
+热路径规则：
+
+- `user_confirmation + trust_level=high` 可直接进入 active / user_confirmed 路径
+- `user_message` 产出的 `thread.blocker` / `thread.open_question` 默认仅作为低信任 candidate
+- 这类 candidate 需要显式 verify 或额外证据后，才应进入 `session_brief`
 
 示例：
 

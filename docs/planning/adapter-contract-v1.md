@@ -117,6 +117,10 @@ interface CaptureAdapter {
 - runtime 必须提供 idempotent write，相同 `event.id` 重复写入视为 no-op
 - 内容级去重（相同内容不同 id）不是 v1 必须能力
 - adapter 不直接生成最终 `canonical_key`，最多通过 metadata hint 提供建议
+- 若提供 `metadata.memory_hints.family_hint`，必须同时提供独立 provenance 字段：
+  - `source_kind`
+  - `trust_level`
+- runtime 不把 `event_type` 当作 provenance
 
 ---
 

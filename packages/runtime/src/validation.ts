@@ -2,6 +2,8 @@ import type {
   Claim,
   ClaimStatus,
   EventType,
+  EventSourceKind,
+  EventTrustLevel,
   NormalizedEvent,
   Outcome,
   OutcomeType,
@@ -66,6 +68,8 @@ const EVENT_TYPES = new Set([
   "session_end",
   "user_confirmation",
 ]);
+const EVENT_SOURCE_KINDS = new Set(["user", "agent", "system", "operator", "imported"]);
+const EVENT_TRUST_LEVELS = new Set(["low", "medium", "high"]);
 const ALLOWED_STATUS_TRANSITIONS: Record<ClaimStatus, Set<ClaimStatus>> = {
   active: new Set(["stale", "superseded", "archived"]),
   stale: new Set(["active", "superseded", "archived"]),
@@ -172,6 +176,12 @@ export function validateOutcomeRecord(outcome: Outcome): void {
 
 export function validateEventRecord(event: NormalizedEvent): void {
   assertEventType(event.event_type);
+  if (event.source_kind) {
+    assertEnumValue<EventSourceKind>(event.source_kind, EVENT_SOURCE_KINDS, "source_kind");
+  }
+  if (event.trust_level) {
+    assertEnumValue<EventTrustLevel>(event.trust_level, EVENT_TRUST_LEVELS, "trust_level");
+  }
 }
 
 export function isExplicitVerificationStatus(
@@ -186,13 +196,18 @@ export function familyHintAllowedForEvent(
     | "blocker"
     | "rejected_strategy"
     | "open_question",
-  eventType: EventType
+  event: NormalizedEvent
 ): boolean {
+  if (event.source_kind !== "user") return false;
+
   if (family === "current_strategy" || family === "rejected_strategy") {
-    return eventType === "user_confirmation";
+    return event.event_type === "user_confirmation" && event.trust_level === "high";
   }
 
-  return eventType === "user_message" || eventType === "user_confirmation";
+  return (
+    (event.event_type === "user_message" || event.event_type === "user_confirmation") &&
+    (event.trust_level === "medium" || event.trust_level === "high")
+  );
 }
 
 export function resolutionRuleSummary(rule: ResolutionRule): string {

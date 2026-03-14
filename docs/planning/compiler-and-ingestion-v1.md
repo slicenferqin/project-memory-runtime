@@ -34,6 +34,7 @@
 
 1. adapter 捕获原始生命周期信号
 2. adapter 生成 `NormalizedEvent`
+   - 补齐 `source_kind` / `trust_level`
 3. runtime 执行 idempotent write 到 `ledger_events`
 4. compiler 根据事件类型选择：
    - 即时增量编译

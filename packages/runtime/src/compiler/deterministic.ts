@@ -188,7 +188,7 @@ function hintedFamilyCanonicalKey(
 function buildHintedFamilyClaim(event: NormalizedEvent): Claim | null {
   const hints = (event.metadata?.memory_hints ?? {}) as MemoryHints;
   if (!hints.family_hint) return null;
-  if (!familyHintAllowedForEvent(hints.family_hint, event.event_type)) return null;
+  if (!familyHintAllowedForEvent(hints.family_hint, event)) return null;
 
   const content = asString(event.metadata?.claim_content) ?? event.content;
   const canonicalKey = hintedFamilyCanonicalKey(
@@ -232,12 +232,14 @@ function buildHintedFamilyClaim(event: NormalizedEvent): Claim | null {
       canonicalKey,
       content,
       assertionKind: "todo",
-      verificationStatus: "inferred",
+      verificationStatus:
+        event.event_type === "user_confirmation" ? "user_confirmed" : "unverified",
       verificationMethod: "memory_hint",
       confidence: 0.8,
       importance: 0.92,
       scope,
       threadStatus: "open",
+      status: event.event_type === "user_confirmation" ? "active" : "stale",
     });
   }
 
@@ -246,12 +248,14 @@ function buildHintedFamilyClaim(event: NormalizedEvent): Claim | null {
     canonicalKey,
     content,
     assertionKind: "todo",
-    verificationStatus: "inferred",
+    verificationStatus:
+      event.event_type === "user_confirmation" ? "user_confirmed" : "unverified",
     verificationMethod: "memory_hint",
     confidence: 0.78,
     importance: 0.82,
     scope,
     threadStatus: "open",
+    status: event.event_type === "user_confirmation" ? "active" : "stale",
   });
 }
 

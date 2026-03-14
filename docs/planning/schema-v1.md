@@ -40,6 +40,8 @@ type NormalizedEvent = {
   agent_version: string
   event_type: EventType
   content: string
+  source_kind?: "user" | "agent" | "system" | "operator" | "imported"
+  trust_level?: "low" | "medium" | "high"
 }
 ```
 
@@ -47,6 +49,7 @@ type NormalizedEvent = {
 
 - `agent_version` 在 V1 视作 required
 - 如果无法确定，允许值为 `"unknown"`
+- `source_kind` / `trust_level` 用于表达 provenance，不等价于 `event_type`
 
 ### 3.2 Optional fields
 
@@ -380,14 +383,13 @@ w_p = 0.20   pin_or_verification_bonus
 w_r = 0.10   relevance
 w_f = 0.10   freshness
 w_i = 0.05   importance
-w_o = 0.00   outcome_score
+w_o = 0.15   outcome_score
 ```
 
 说明：
 
-- v1 初期 outcome 数据较少，因此 `w_o` 先设低值
-- 后续 benchmark 可以逐步提升 `w_o`
-- `w_o = 0.00` 仅表示 v1 初始 ranking 不直接消费 `outcome_score`
+- 当前 runtime baseline 已开启轻量 outcome-aware ranking
+- `w_o` 保持低值，避免 outcome 稀疏阶段主导排序
 - outcome 仍参与 stale 延缓、verification strengthening、benchmark 记录与后续调参
 
 ### 8.3 Freshness function
