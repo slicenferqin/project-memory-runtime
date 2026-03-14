@@ -4,6 +4,12 @@ import path from "node:path";
 import { mkdtempSync } from "node:fs";
 import { ProjectMemoryRuntime } from "../../packages/runtime/dist/index.js";
 
+if (Number(process.versions.node.split(".")[0]) !== 20) {
+  throw new Error(
+    `Runtime benchmark requires Node 20.x for the supported native sqlite path. Current version: ${process.versions.node}`
+  );
+}
+
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
@@ -197,7 +203,12 @@ function runSessionRecoveryBenchmark() {
   const threadRecall = computeRecall(canonicalKeys(packet.open_threads), threadExpected);
   const noMemoryBaseline = runNoMemorySessionRecoveryBaseline(activeExpected, threadExpected);
   const keywordBaseline = runKeywordSessionRecoveryBaseline(runtime, activeExpected, threadExpected);
-  const pass = activeRecall.recall >= 0.66 && threadRecall.recall >= 0.8;
+  const activeDeltaVsKeyword = activeRecall.recall - keywordBaseline.activeRecall.recall;
+  const threadDeltaVsKeyword = threadRecall.recall - keywordBaseline.threadRecall.recall;
+  const pass =
+    activeRecall.recall >= 0.66 &&
+    threadRecall.recall >= 0.8 &&
+    (activeDeltaVsKeyword > 0 || threadDeltaVsKeyword > 0);
 
   runtime.close();
 
@@ -214,10 +225,10 @@ function runSessionRecoveryBenchmark() {
         threadRecall.recall - noMemoryBaseline.threadRecall.recall
       ),
       active_claim_recall_delta_vs_keyword: round(
-        activeRecall.recall - keywordBaseline.activeRecall.recall
+        activeDeltaVsKeyword
       ),
       open_thread_recall_delta_vs_keyword: round(
-        threadRecall.recall - keywordBaseline.threadRecall.recall
+        threadDeltaVsKeyword
       ),
       active_claim_hits: activeRecall.hits,
       open_thread_hits: threadRecall.hits,
@@ -456,8 +467,8 @@ function runOutcomeLearningBenchmark() {
     rounds.length === 3 &&
     rounds[0].positive_rank >= finalRound.positive_rank &&
     rounds[0].negative_rank <= finalRound.negative_rank &&
-    avoidanceClaimGrowth <= 1 &&
-    packetPollutionCount <= 1 &&
+    avoidanceClaimGrowth === 0 &&
+    packetPollutionCount === 0 &&
     positiveDelta > 0 &&
     negativeDelta > 0;
 
@@ -539,15 +550,162 @@ function runMultiAgentConsistencyBenchmark() {
     JSON.stringify(activeA) === JSON.stringify(activeB) &&
     JSON.stringify(threadsA) === JSON.stringify(threadsB);
 
+  const cloneWriter = createRuntime("pmr-bench-clone-writer-");
+  const cloneReader = createRuntime("pmr-bench-clone-reader-");
+  cloneWriter.recordEvent({
+    id: "evt-clone-decision",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    workspace_id: "clone-a",
+    repo_id: "github.com/acme/demo",
+    source_kind: "user",
+    trust_level: "high",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Use SQLite as the first persistence backend",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+  const cloneEvents = cloneWriter.listEvents("github.com/acme/demo");
+  for (const event of cloneEvents) {
+    cloneReader.recordEvent({
+      ...event,
+      workspace_id: "clone-b",
+      id: `${event.id}-clone-b`,
+    });
+  }
+  const clonePacket = cloneReader.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    agent_id: "codex",
+    scope: {},
+  });
+  const cloneConsistency =
+    clonePacket.active_claims.some(
+      (claim) => claim.canonical_key === "decision.persistence.backend"
+    ) ? 1 : 0;
+
+  const worktreeRuntime = createRuntime("pmr-bench-worktree-");
+  worktreeRuntime.recordEvent({
+    id: "evt-worktree-thread",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    workspace_id: "worktree-a",
+    repo_id: "github.com/acme/demo",
+    source_kind: "user",
+    trust_level: "medium",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_message",
+    scope: { branch: "fix/windows-install" },
+    content: "Windows path normalization is blocking reliable install tests",
+    metadata: {
+      memory_hints: {
+        family_hint: "blocker",
+        canonical_key_hint: "windows.install",
+      },
+    },
+  });
+  const blockerClaim = worktreeRuntime
+    .listClaims("github.com/acme/demo")
+    .find((claim) => claim.canonical_key === "thread.blocker.windows.install");
+  if (blockerClaim) {
+    worktreeRuntime.verifyClaim({
+      claim_id: blockerClaim.id,
+      status: "system_verified",
+      method: "benchmark_review",
+    });
+  }
+  const matchingWorktreePacket = worktreeRuntime.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    scope: { branch: "fix/windows-install" },
+  });
+  const otherWorktreePacket = worktreeRuntime.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    scope: { branch: "main" },
+  });
+  const worktreeIsolation =
+    matchingWorktreePacket.open_threads.some(
+      (claim) => claim.canonical_key === "thread.blocker.windows.install"
+    ) &&
+    !otherWorktreePacket.open_threads.some(
+      (claim) => claim.canonical_key === "thread.blocker.windows.install"
+    )
+      ? 1
+      : 0;
+
+  const subprojectRuntime = createRuntime("pmr-bench-subproject-");
+  subprojectRuntime.recordEvent({
+    id: "evt-subproject-api",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/mono::packages/api",
+    source_kind: "user",
+    trust_level: "high",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Use Fastify inside packages/api",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.subproject.framework",
+      },
+    },
+  });
+  subprojectRuntime.recordEvent({
+    id: "evt-subproject-web",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/mono::packages/web",
+    source_kind: "user",
+    trust_level: "high",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    content: "Use Next.js inside packages/web",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.subproject.framework",
+      },
+    },
+  });
+  const apiPacket = subprojectRuntime.buildSessionBrief({
+    project_id: "github.com/acme/mono::packages/api",
+    agent_id: "claude-code",
+    scope: {},
+  });
+  const webPacket = subprojectRuntime.buildSessionBrief({
+    project_id: "github.com/acme/mono::packages/web",
+    agent_id: "claude-code",
+    scope: {},
+  });
+  const subprojectIsolation =
+    apiPacket.active_claims.some((claim) => claim.content.includes("Fastify")) &&
+    !apiPacket.active_claims.some((claim) => claim.content.includes("Next.js")) &&
+    webPacket.active_claims.some((claim) => claim.content.includes("Next.js")) &&
+    !webPacket.active_claims.some((claim) => claim.content.includes("Fastify"))
+      ? 1
+      : 0;
+
   writer.close();
   reader.close();
+  cloneWriter.close();
+  cloneReader.close();
+  worktreeRuntime.close();
+  subprojectRuntime.close();
 
   return {
     name: "multi_agent_consistency",
-    pass,
+    pass: pass && cloneConsistency === 1 && worktreeIsolation === 1 && subprojectIsolation === 1,
     metrics: {
       active_decision_mismatch: JSON.stringify(activeA) === JSON.stringify(activeB) ? 0 : 1,
       open_thread_divergence: JSON.stringify(threadsA) === JSON.stringify(threadsB) ? 0 : 1,
+      clone_consistency: cloneConsistency,
+      worktree_isolation: worktreeIsolation,
+      subproject_isolation: subprojectIsolation,
     },
     packet: {
       agent_a_active_claims: activeA,

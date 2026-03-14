@@ -97,6 +97,8 @@ metadata.memory_hints = {
 - `canonical_key_hint` 表达 family 内的稳定 slot
 - compiler 负责最终 key 组装
 - `family_hint` 不是 claim 直写后门
+- `manual_override` / `git_revert` 的 negative-memory decision 必须绑定稳定 target slot
+- 缺少 `overrides_canonical_key` 或等价稳定 key 时，只记录 outcome，不铸造 `decision.avoid.*`
 
 V1 额外要求独立 provenance：
 

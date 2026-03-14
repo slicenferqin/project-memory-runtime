@@ -159,6 +159,30 @@ test("runtime records deterministic fact, thread, decision and outcome artifacts
   runtime.close();
 });
 
+test("runtime does not materialize negative-memory decisions without a stable target slot", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-negative-slot-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  runtime.recordEvent({
+    id: "evt-override-freeform",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "manual_override",
+    content: "Negative strategy was overridden",
+  });
+
+  const claims = runtime.listClaims("github.com/acme/demo");
+  assert.ok(
+    !claims.some((claim) => claim.canonical_key.startsWith("decision.avoid."))
+  );
+  assert.ok(runtime.listOutcomes("github.com/acme/demo").length > 0);
+
+  runtime.close();
+});
+
 test("runtime applies positive and negative outcomes to claim lifecycle", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-lifecycle-"));
   const { ProjectMemoryRuntime } = await import("../dist/index.js");
@@ -550,17 +574,36 @@ test("runtime enforces active singleton invariant only within the same scope sig
     agent_id: "memoryctl",
     scope: { repo: "origin" },
   });
+  const repoScopedDecision = repoScopedSnapshot.active_claims.find(
+    (claim) => claim.canonical_key === "decision.persistence.backend"
+  );
   assert.equal(
-    repoScopedSnapshot.active_claims[0]?.canonical_key,
+    repoScopedDecision?.canonical_key,
     "decision.persistence.backend"
   );
-  assert.equal(repoScopedSnapshot.active_claims[0]?.scope?.repo, "origin");
+  assert.equal(repoScopedDecision?.scope?.repo, "origin");
   assert.equal(
     repoScopedSnapshot.active_claims.filter(
       (claim) => claim.canonical_key === "decision.persistence.backend"
     ).length,
     1
   );
+
+  const projectWideSnapshot = runtime.buildProjectSnapshot({
+    project_id: "github.com/acme/demo",
+    agent_id: "memoryctl",
+    scope: {},
+  });
+  assert.equal(
+    projectWideSnapshot.active_claims.filter(
+      (claim) => claim.canonical_key === "decision.persistence.backend"
+    ).length,
+    1
+  );
+  const projectWideDecision = projectWideSnapshot.active_claims.find(
+    (claim) => claim.canonical_key === "decision.persistence.backend"
+  );
+  assert.equal(projectWideDecision?.scope?.branch, "main");
 
   runtime.close();
 });

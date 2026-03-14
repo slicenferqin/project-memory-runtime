@@ -77,6 +77,7 @@ Session recovery benchmark 的标准答案应来自以下二选一：
 
 - open thread 恢复率 >= 0.8
 - 重复提问率相对 baseline 降低 >= 30%
+- 至少一项 session recovery 指标相对 keyword baseline 为正向 delta
 
 ---
 
@@ -186,8 +187,8 @@ Session recovery benchmark 的标准答案应来自以下二选一：
 
 当前实现说明：
 
-- runtime-only harness 可以先验证 shared-db / shared-project-id 一致性
-- clone / worktree / subproject 场景在 adapter 前仍需补专门 fixture 或集成套件
+- runtime-only harness 现在已补 shared-db、clone replay、worktree scope、subproject isolation fixture
+- clone / worktree / subproject 仍只是 runtime-level fixture，不等于真实 adapter 集成证明
 
 ---
 

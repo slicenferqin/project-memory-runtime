@@ -266,9 +266,8 @@ function buildNegativeMemoryDecision(event: NormalizedEvent): Claim | null {
   const overrideKey =
     asString(event.metadata?.overrides_canonical_key) ??
     asString(hints.canonical_key_hint);
-  const canonicalKey = overrideKey
-    ? `decision.avoid.${overrideKey}`
-    : `decision.avoid.${slugify(event.content)}`;
+  if (!overrideKey) return null;
+  const canonicalKey = `decision.avoid.${overrideKey}`;
 
   const content =
     asString(event.metadata?.negative_memory_content) ??

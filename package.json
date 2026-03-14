@@ -11,7 +11,7 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "build": "pnpm --filter @slicenferqin/project-memory-runtime-core build",
-    "benchmark:runtime": "pnpm --filter @slicenferqin/project-memory-runtime-benchmarks benchmark",
+    "benchmark:runtime": "pnpm run preflight:test && pnpm --filter @slicenferqin/project-memory-runtime-benchmarks benchmark",
     "memoryctl": "pnpm --filter @slicenferqin/project-memoryctl cli",
     "preflight:test": "node ./scripts/ensure-node-version.mjs",
     "rebuild:native": "pnpm rebuild better-sqlite3",
