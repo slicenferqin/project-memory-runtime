@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import {
+  type ClaimScope,
   type EventCapturePath,
   type EventScope,
   type NormalizedEvent,
@@ -70,12 +71,11 @@ export interface ClaudeAdapterOptions {
   context: ClaudeAdapterContext;
 }
 
-const CLAUDE_ALLOWED_CAPTURE_PATHS: EventCapturePath[] = [
-  "fixture.user_confirmation",
-  "fixture.user_message",
-  "import.transcript",
-  "system.tool_observation",
-  "operator.manual",
+export interface ClaudeCodeRuntimeConfig extends RuntimeConfig {
+  enable_claude_hook_capture_paths?: boolean;
+}
+
+const CLAUDE_TRUSTED_HOOK_CAPTURE_PATHS: EventCapturePath[] = [
   "claude_code.hook.user_confirmation",
   "claude_code.hook.user_message",
 ];
@@ -97,6 +97,14 @@ function buildBaseScope(context: ClaudeAdapterContext): EventScope | undefined {
   if (context.repo_id) normalized.repo = context.repo_id;
   if (context.branch) normalized.branch = context.branch;
   if (context.cwd) normalized.cwd = context.cwd;
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function buildRecallScope(context: ClaudeAdapterContext): ClaimScope | undefined {
+  const normalized: ClaimScope = {};
+  if (context.repo_id) normalized.repo = context.repo_id;
+  if (context.branch) normalized.branch = context.branch;
+  if (context.cwd) normalized.cwd_prefix = context.cwd;
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
@@ -335,11 +343,25 @@ function formatInjection(packet: RecallPacket): string {
   return lines.join("\n");
 }
 
-export function createClaudeCodeRuntime(config: RuntimeConfig = {}): ProjectMemoryRuntime {
+export function createClaudeCodeRuntime(
+  config: ClaudeCodeRuntimeConfig = {}
+): ProjectMemoryRuntime {
+  const {
+    enable_claude_hook_capture_paths = false,
+    ...runtimeConfig
+  } = config;
+
+  if (!enable_claude_hook_capture_paths) {
+    return new Runtime(runtimeConfig);
+  }
+
   return new Runtime({
-    ...config,
+    ...runtimeConfig,
     allowed_capture_paths: Array.from(
-      new Set([...(config.allowed_capture_paths ?? []), ...CLAUDE_ALLOWED_CAPTURE_PATHS])
+      new Set([
+        ...(runtimeConfig.allowed_capture_paths ?? []),
+        ...CLAUDE_TRUSTED_HOOK_CAPTURE_PATHS,
+      ])
     ),
   });
 }
@@ -379,7 +401,7 @@ export class ClaudeCodeAdapter {
       session_id: this.context.session_id,
       workspace_id: this.context.workspace_id,
       agent_id: this.context.agent_id ?? "claude-code",
-      scope: buildBaseScope(this.context),
+      scope: buildRecallScope(this.context),
     });
 
     const packetHash = hashValue({

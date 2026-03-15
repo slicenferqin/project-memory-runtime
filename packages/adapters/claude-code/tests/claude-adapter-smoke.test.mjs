@@ -183,17 +183,23 @@ test("claude adapter injects session brief once per unchanged packet", async () 
       session_id: "session-2",
       repo_id: "github.com/acme/demo",
       branch: "main",
+      cwd: "/repo",
     },
   });
 
   adapter.record({
-    kind: "user_confirmation",
-    content: "Use SQLite as the first persistence backend",
-    metadata: {
-      memory_hints: {
-        canonical_key_hint: "decision.persistence.backend",
-      },
+    hook: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: {
+      command: "pnpm test",
+      cwd: "/repo",
+      branch: "main",
     },
+    tool_output: {
+      stdout: "Windows install path normalizer failed",
+      failing_test: "Windows install path normalizer",
+    },
+    exit_code: 1,
   });
 
   const first = adapter.injectSessionBrief();
@@ -201,10 +207,68 @@ test("claude adapter injects session brief once per unchanged packet", async () 
 
   assert.equal(first.deduped, false);
   assert.ok(first.text?.includes("Project Memory"));
+  assert.ok(
+    first.packet.open_threads.some(
+      (claim) => claim.canonical_key === "thread.test.windows.install.path.normalizer"
+    )
+  );
+  assert.ok(first.text?.includes("Windows install path normalizer"));
   assert.equal(second.deduped, true);
   assert.equal(second.text, null);
 
   runtime.close();
+});
+
+test("claude adapter helper keeps trusted hook capture paths opt-in", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-hook-gate-"));
+  const optInTempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-hook-optin-"));
+  const adapterModule = await import("../dist/index.js");
+
+  const runtime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  assert.throws(() =>
+    runtime.recordEvent({
+      id: "evt-trusted-hook-default",
+      ts: "2026-03-15T00:00:00.000Z",
+      project_id: "github.com/acme/demo",
+      agent_id: "claude-code",
+      agent_version: "unknown",
+      event_type: "user_confirmation",
+      capture_path: "claude_code.hook.user_confirmation",
+      content: "Use SQLite as the first persistence backend",
+      metadata: {
+        memory_hints: {
+          canonical_key_hint: "decision.persistence.backend",
+        },
+      },
+    })
+  );
+  runtime.close();
+
+  const optInRuntime = adapterModule.createClaudeCodeRuntime({
+    dataDir: optInTempDir,
+    enable_claude_hook_capture_paths: true,
+  });
+  optInRuntime.recordEvent({
+    id: "evt-trusted-hook-optin",
+    ts: "2026-03-15T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    capture_path: "claude_code.hook.user_confirmation",
+    content: "Use SQLite as the first persistence backend",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+  assert.ok(
+    optInRuntime
+      .listClaims("github.com/acme/demo")
+      .some((claim) => claim.canonical_key === "decision.persistence.backend")
+  );
+  optInRuntime.close();
 });
 
 test("claude adapter does not emit unsupported destructive lifecycle events from hook normalization", async () => {

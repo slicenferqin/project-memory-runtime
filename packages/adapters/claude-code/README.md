@@ -36,3 +36,8 @@ Exports:
 - `createClaudeCodeRuntime(config)`
 - `ClaudeCodeAdapter`
 - `defaultClaudeProjectId(cwd)`
+
+Notes:
+
+- `createClaudeCodeRuntime()` does not enable `claude_code.hook.*` by default
+- future real hook-envelope integrations must opt in explicitly with `enable_claude_hook_capture_paths: true`
