@@ -267,6 +267,8 @@ runtime-only benchmark 约束：
 - admin/operator 入口仅允许出现在独立 operator-integrated 套件
 - 若输出 delta，必须显式运行 baseline
 - outcome benchmark 应额外记录 memory growth / packet pollution 指标
+- repo 本地 `tmp/benchmarks/*` 仅是临时输出，不是项目证据源
+- go / no-go 结论应以 Node 20 CI 生成的 benchmark artifact 为准
 
 ---
 

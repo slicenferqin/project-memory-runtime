@@ -25,6 +25,7 @@
 - deterministic extraction 优先
 - LLM 只作为受控增强层
 - 编译流程必须幂等
+- 高价值 `user_confirmation` / `family_hint` 只接受 allowlisted capture path
 
 ---
 
@@ -34,7 +35,8 @@
 
 1. adapter 捕获原始生命周期信号
 2. adapter 生成 `NormalizedEvent`
-   - 补齐 `source_kind` / `trust_level`
+   - 高信任事件先补齐 `capture_path`
+   - `source_kind` / `trust_level` 由 runtime 基于 `capture_path` 归一化
 3. runtime 执行 idempotent write 到 `ledger_events`
 4. compiler 根据事件类型选择：
    - 即时增量编译

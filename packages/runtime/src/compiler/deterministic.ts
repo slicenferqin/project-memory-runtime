@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Claim, ClaimScope, NormalizedEvent, Outcome, ResolutionRule } from "../types.js";
 import { normalizeClaimScope } from "../scope.js";
-import { familyHintAllowedForEvent } from "../validation.js";
+import {
+  familyHintAllowedForEvent,
+  hasTrustedUserConfirmationCapturePath,
+} from "../validation.js";
 
 interface MemoryHints {
   canonical_key_hint?: string;
@@ -145,7 +148,7 @@ function extractFailingTest(event: NormalizedEvent): string | undefined {
 }
 
 function buildDecisionFromConfirmation(event: NormalizedEvent): Claim | null {
-  if (event.event_type !== "user_confirmation") return null;
+  if (!hasTrustedUserConfirmationCapturePath(event)) return null;
 
   const hints = (event.metadata?.memory_hints ?? {}) as MemoryHints;
   if (hints.family_hint) return null;

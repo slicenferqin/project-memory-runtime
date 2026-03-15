@@ -117,10 +117,9 @@ interface CaptureAdapter {
 - runtime 必须提供 idempotent write，相同 `event.id` 重复写入视为 no-op
 - 内容级去重（相同内容不同 id）不是 v1 必须能力
 - adapter 不直接生成最终 `canonical_key`，最多通过 metadata hint 提供建议
-- 若提供 `metadata.memory_hints.family_hint`，必须同时提供独立 provenance 字段：
-  - `source_kind`
-  - `trust_level`
-- runtime 不把 `event_type` 当作 provenance
+- 若提供 `metadata.memory_hints.family_hint` 或高信任 `user_confirmation`，必须同时提供 `capture_path`
+- `capture_path` 必须来自 runtime 支持的闭集；`source_kind` / `trust_level` 由 runtime 基于 `capture_path` 归一化
+- 正式 adapter capture path 默认不在 runtime allowlist 中；reference adapter spike 需要显式开启
 
 ---
 

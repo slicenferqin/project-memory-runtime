@@ -162,6 +162,7 @@ function runSessionRecoveryBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use SQLite as the first persistence backend",
     metadata: {
       memory_hints: {
@@ -251,6 +252,7 @@ function runStaleSuppressionBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use JSON backend strategy",
     metadata: {
       memory_hints: {
@@ -266,6 +268,7 @@ function runStaleSuppressionBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use SQLite backend strategy",
     metadata: {
       memory_hints: {
@@ -281,6 +284,7 @@ function runStaleSuppressionBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use flat-file backend strategy",
     metadata: {
       memory_hints: {
@@ -295,6 +299,7 @@ function runStaleSuppressionBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Replace flat-file backend strategy",
     metadata: {
       memory_hints: {
@@ -346,6 +351,7 @@ function runOutcomeLearningBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use neutral backend strategy",
     metadata: {
       memory_hints: {
@@ -360,6 +366,7 @@ function runOutcomeLearningBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use JSON backend strategy",
     metadata: {
       memory_hints: {
@@ -374,6 +381,7 @@ function runOutcomeLearningBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use SQLite backend strategy",
     metadata: {
       memory_hints: {
@@ -523,6 +531,7 @@ function runMultiAgentConsistencyBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use SQLite as the first persistence backend",
     metadata: {
       memory_hints: {
@@ -558,11 +567,10 @@ function runMultiAgentConsistencyBenchmark() {
     project_id: "github.com/acme/demo",
     workspace_id: "clone-a",
     repo_id: "github.com/acme/demo",
-    source_kind: "user",
-    trust_level: "high",
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use SQLite as the first persistence backend",
     metadata: {
       memory_hints: {
@@ -595,11 +603,10 @@ function runMultiAgentConsistencyBenchmark() {
     project_id: "github.com/acme/demo",
     workspace_id: "worktree-a",
     repo_id: "github.com/acme/demo",
-    source_kind: "user",
-    trust_level: "medium",
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_message",
+    capture_path: "fixture.user_message",
     scope: { branch: "fix/windows-install" },
     content: "Windows path normalization is blocking reliable install tests",
     metadata: {
@@ -644,11 +651,10 @@ function runMultiAgentConsistencyBenchmark() {
     id: "evt-subproject-api",
     ts: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/mono::packages/api",
-    source_kind: "user",
-    trust_level: "high",
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use Fastify inside packages/api",
     metadata: {
       memory_hints: {
@@ -660,11 +666,10 @@ function runMultiAgentConsistencyBenchmark() {
     id: "evt-subproject-web",
     ts: "2026-03-12T00:00:00.000Z",
     project_id: "github.com/acme/mono::packages/web",
-    source_kind: "user",
-    trust_level: "high",
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use Next.js inside packages/web",
     metadata: {
       memory_hints: {

@@ -50,7 +50,7 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
   });
 
   const stats = runtime.getStats();
-  assert.equal(stats.migrationsApplied, 3);
+  assert.equal(stats.migrationsApplied, 4);
   assert.equal(stats.events, 1);
   assert.equal(stats.claims, 1);
   assert.equal(stats.outcomes, 1);
@@ -109,6 +109,7 @@ test("runtime records deterministic fact, thread, decision and outcome artifacts
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
     content: "Use SQLite as the first persistence backend",
     metadata: {
       memory_hints: {
@@ -798,8 +799,7 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     agent_id: "user",
     agent_version: "unknown",
     event_type: "user_confirmation",
-    source_kind: "user",
-    trust_level: "high",
+    capture_path: "fixture.user_confirmation",
     content: "Current strategy is to stabilize Windows install path handling first",
     metadata: {
       memory_hints: {
@@ -816,8 +816,7 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     agent_id: "user",
     agent_version: "unknown",
     event_type: "user_message",
-    source_kind: "user",
-    trust_level: "medium",
+    capture_path: "fixture.user_message",
     content: "Windows path normalization is blocking reliable install tests",
     metadata: {
       memory_hints: {
@@ -834,8 +833,7 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     agent_id: "user",
     agent_version: "unknown",
     event_type: "user_confirmation",
-    source_kind: "user",
-    trust_level: "high",
+    capture_path: "fixture.user_confirmation",
     content: "Do not go back to JSON-based persistence",
     metadata: {
       memory_hints: {
@@ -852,8 +850,7 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     agent_id: "user",
     agent_version: "unknown",
     event_type: "user_message",
-    source_kind: "user",
-    trust_level: "medium",
+    capture_path: "fixture.user_message",
     content: "Should path normalization happen before or after package extraction?",
     metadata: {
       memory_hints: {
@@ -911,8 +908,7 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "agent_message",
-    source_kind: "agent",
-    trust_level: "low",
+    capture_path: "import.transcript",
     content: "Agent claims this is a blocker",
     metadata: {
       memory_hints: {
@@ -928,4 +924,107 @@ test("runtime extracts high-value hinted claim families deterministically", asyn
   );
 
   runtime.close();
+});
+
+test("runtime rejects self-reported high-trust hints without a trusted capture path", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-untrusted-hints-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+
+  assert.throws(() =>
+    runtime.recordEvent({
+      id: "evt-self-reported-hint",
+      ts: "2026-03-12T00:00:00.000Z",
+      project_id: "github.com/acme/demo",
+      agent_id: "adapter",
+      agent_version: "unknown",
+      event_type: "user_confirmation",
+      source_kind: "user",
+      trust_level: "high",
+      content: "Current strategy is to stabilize Windows install path handling first",
+      metadata: {
+        memory_hints: {
+          family_hint: "current_strategy",
+          canonical_key_hint: "windows.install",
+        },
+      },
+    })
+  );
+
+  runtime.recordEvent({
+    id: "evt-self-reported-confirmation",
+    ts: "2026-03-12T00:00:01.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "adapter",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    source_kind: "user",
+    trust_level: "high",
+    content: "Use SQLite as the first persistence backend",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+
+  const claims = runtime.listClaims("github.com/acme/demo");
+  assert.ok(
+    !claims.some((claim) => claim.canonical_key === "decision.current_strategy.windows.install")
+  );
+  assert.ok(!claims.some((claim) => claim.canonical_key === "decision.persistence.backend"));
+
+  runtime.close();
+});
+
+test("runtime only accepts claude hook capture paths when explicitly allowlisted", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-path-default-"));
+  const allowedTempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-path-allowed-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  assert.throws(() =>
+    runtime.recordEvent({
+      id: "evt-claude-hook-default",
+      ts: "2026-03-12T00:00:00.000Z",
+      project_id: "github.com/acme/demo",
+      agent_id: "claude-code",
+      agent_version: "unknown",
+      event_type: "user_confirmation",
+      capture_path: "claude_code.hook.user_confirmation",
+      content: "Use SQLite as the first persistence backend",
+      metadata: {
+        memory_hints: {
+          canonical_key_hint: "decision.persistence.backend",
+        },
+      },
+    })
+  );
+  runtime.close();
+
+  const allowlistedRuntime = new ProjectMemoryRuntime({
+    dataDir: allowedTempDir,
+    allowed_capture_paths: ["fixture.user_confirmation", "claude_code.hook.user_confirmation"],
+  });
+  allowlistedRuntime.recordEvent({
+    id: "evt-claude-hook-allowlisted",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    capture_path: "claude_code.hook.user_confirmation",
+    content: "Use SQLite as the first persistence backend",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+
+  const claims = allowlistedRuntime.listClaims("github.com/acme/demo");
+  assert.ok(claims.some((claim) => claim.canonical_key === "decision.persistence.backend"));
+
+  allowlistedRuntime.close();
 });

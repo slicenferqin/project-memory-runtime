@@ -31,6 +31,14 @@ export interface EventScope {
 
 export type EventSourceKind = "user" | "agent" | "system" | "operator" | "imported";
 export type EventTrustLevel = "low" | "medium" | "high";
+export type EventCapturePath =
+  | "fixture.user_confirmation"
+  | "fixture.user_message"
+  | "claude_code.hook.user_confirmation"
+  | "claude_code.hook.user_message"
+  | "import.transcript"
+  | "system.tool_observation"
+  | "operator.manual";
 
 export interface NormalizedEvent {
   id: string;
@@ -45,6 +53,7 @@ export interface NormalizedEvent {
   repo_id?: string;
   parent_event_id?: string;
   causation_id?: string;
+  capture_path?: EventCapturePath;
   source_kind?: EventSourceKind;
   trust_level?: EventTrustLevel;
   scope?: EventScope;
@@ -239,6 +248,7 @@ export interface SearchClaimsInput {
 export interface RuntimeConfig {
   dataDir?: string;
   dbPath?: string;
+  allowed_capture_paths?: EventCapturePath[];
 }
 
 export interface RuntimePaths {

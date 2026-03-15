@@ -40,6 +40,7 @@ type NormalizedEvent = {
   agent_version: string
   event_type: EventType
   content: string
+  capture_path?: EventCapturePath
   source_kind?: "user" | "agent" | "system" | "operator" | "imported"
   trust_level?: "low" | "medium" | "high"
 }
@@ -49,7 +50,9 @@ type NormalizedEvent = {
 
 - `agent_version` 在 V1 视作 required
 - 如果无法确定，允许值为 `"unknown"`
-- `source_kind` / `trust_level` 用于表达 provenance，不等价于 `event_type`
+- `capture_path` 是 provenance 的主入口；当其存在时，runtime 会据此归一化 `source_kind` / `trust_level`
+- `source_kind` / `trust_level` 不再是高价值 claim family 的自由信任输入
+- 对 `user_confirmation` 和 `family_hint` 这类高信任热路径，`capture_path` 是必需约束
 
 ### 3.2 Optional fields
 
@@ -108,7 +111,26 @@ type EventScope = {
 }
 ```
 
-### 3.5 Required metadata for command-like events
+### 3.5 EventCapturePath
+
+```ts
+type EventCapturePath =
+  | "fixture.user_confirmation"
+  | "fixture.user_message"
+  | "claude_code.hook.user_confirmation"
+  | "claude_code.hook.user_message"
+  | "import.transcript"
+  | "system.tool_observation"
+  | "operator.manual"
+```
+
+说明：
+
+- `capture_path` 必须来自 runtime 认可的闭集
+- runtime instance 可以进一步配置 allowlist，默认不会直接开放正式 adapter capture path
+- `claude_code.hook.*` 属于 reference adapter spike 路径，不代表 runtime 已进入正式 adapter 阶段
+
+### 3.6 Required metadata for command-like events
 
 对于以下事件：
 

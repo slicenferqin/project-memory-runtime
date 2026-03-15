@@ -140,6 +140,7 @@ project-memory-runtime/
 - `pnpm run test`
 - `pnpm run benchmark:runtime`
 - `pnpm run rebuild:native`
+- `tools/benchmarks/tmp/benchmarks/*` 仅作本地临时结果；正式门禁以 Node 20 CI artifact 为准
 
 ---
 

@@ -1,5 +1,6 @@
 import type {
   Claim,
+  EventCapturePath,
   ClaimStatus,
   EventType,
   EventSourceKind,
@@ -70,12 +71,96 @@ const EVENT_TYPES = new Set([
 ]);
 const EVENT_SOURCE_KINDS = new Set(["user", "agent", "system", "operator", "imported"]);
 const EVENT_TRUST_LEVELS = new Set(["low", "medium", "high"]);
+const EVENT_CAPTURE_PATHS = new Set([
+  "fixture.user_confirmation",
+  "fixture.user_message",
+  "claude_code.hook.user_confirmation",
+  "claude_code.hook.user_message",
+  "import.transcript",
+  "system.tool_observation",
+  "operator.manual",
+]);
 const ALLOWED_STATUS_TRANSITIONS: Record<ClaimStatus, Set<ClaimStatus>> = {
   active: new Set(["stale", "superseded", "archived"]),
   stale: new Set(["active", "superseded", "archived"]),
   superseded: new Set(["archived"]),
   archived: new Set(["active"]),
 };
+type CapturePathRule = {
+  sourceKind: EventSourceKind;
+  trustLevel: EventTrustLevel;
+  eventTypes: readonly EventType[];
+};
+
+const CAPTURE_PATH_RULES: Record<EventCapturePath, CapturePathRule> = {
+  "fixture.user_confirmation": {
+    sourceKind: "user",
+    trustLevel: "high",
+    eventTypes: ["user_confirmation"],
+  },
+  "fixture.user_message": {
+    sourceKind: "user",
+    trustLevel: "medium",
+    eventTypes: ["user_message"],
+  },
+  "claude_code.hook.user_confirmation": {
+    sourceKind: "user",
+    trustLevel: "high",
+    eventTypes: ["user_confirmation"],
+  },
+  "claude_code.hook.user_message": {
+    sourceKind: "user",
+    trustLevel: "medium",
+    eventTypes: ["user_message"],
+  },
+  "import.transcript": {
+    sourceKind: "imported",
+    trustLevel: "low",
+    eventTypes: ["user_message", "agent_message", "user_confirmation", "session_start", "session_end"],
+  },
+  "system.tool_observation": {
+    sourceKind: "system",
+    trustLevel: "high",
+    eventTypes: [
+      "file_edit",
+      "command_result",
+      "test_result",
+      "build_result",
+      "lint_result",
+      "benchmark_result",
+      "deploy_result",
+      "git_commit",
+      "git_revert",
+      "issue_link",
+      "issue_closed",
+      "issue_reopened",
+    ],
+  },
+  "operator.manual": {
+    sourceKind: "operator",
+    trustLevel: "high",
+    eventTypes: ["user_confirmation", "manual_override", "human_edit_after_agent"],
+  },
+};
+
+const TRUSTED_USER_CONFIRMATION_CAPTURE_PATHS = new Set<EventCapturePath>([
+  "fixture.user_confirmation",
+  "claude_code.hook.user_confirmation",
+  "operator.manual",
+]);
+
+const TRUSTED_USER_MESSAGE_CAPTURE_PATHS = new Set<EventCapturePath>([
+  "fixture.user_message",
+  "claude_code.hook.user_message",
+]);
+
+export const DEFAULT_ALLOWED_CAPTURE_PATHS: EventCapturePath[] = [
+  "fixture.user_confirmation",
+  "fixture.user_message",
+  "import.transcript",
+  "system.tool_observation",
+  "operator.manual",
+];
 
 export class RuntimeInvariantError extends Error {
   constructor(message: string) {
@@ -100,8 +185,21 @@ function assertRange(value: number, min: number, max: number, label: string): vo
   }
 }
 
+function eventMemoryHints(
+  event: NormalizedEvent
+): { family_hint?: string; canonical_key_hint?: string } | undefined {
+  const hints = event.metadata?.memory_hints;
+  return hints && typeof hints === "object" ? (hints as { family_hint?: string; canonical_key_hint?: string }) : undefined;
+}
+
 export function assertEventType(eventType: string): asserts eventType is EventType {
   assertEnumValue<EventType>(eventType, EVENT_TYPES, "event_type");
+}
+
+export function assertCapturePath(
+  capturePath: string
+): asserts capturePath is EventCapturePath {
+  assertEnumValue<EventCapturePath>(capturePath, EVENT_CAPTURE_PATHS, "capture_path");
 }
 
 export function assertVerificationStatus(
@@ -176,12 +274,74 @@ export function validateOutcomeRecord(outcome: Outcome): void {
 
 export function validateEventRecord(event: NormalizedEvent): void {
   assertEventType(event.event_type);
+  if (event.capture_path) {
+    assertCapturePath(event.capture_path);
+    const rule = CAPTURE_PATH_RULES[event.capture_path];
+    if (!rule.eventTypes.includes(event.event_type)) {
+      throw new RuntimeInvariantError(
+        `capture_path ${event.capture_path} does not allow event_type ${event.event_type}`
+      );
+    }
+    if (event.source_kind && event.source_kind !== rule.sourceKind) {
+      throw new RuntimeInvariantError(
+        `capture_path ${event.capture_path} requires source_kind=${rule.sourceKind}`
+      );
+    }
+    if (event.trust_level && event.trust_level !== rule.trustLevel) {
+      throw new RuntimeInvariantError(
+        `capture_path ${event.capture_path} requires trust_level=${rule.trustLevel}`
+      );
+    }
+  }
   if (event.source_kind) {
     assertEnumValue<EventSourceKind>(event.source_kind, EVENT_SOURCE_KINDS, "source_kind");
   }
   if (event.trust_level) {
     assertEnumValue<EventTrustLevel>(event.trust_level, EVENT_TRUST_LEVELS, "trust_level");
   }
+  if (eventMemoryHints(event)?.family_hint && !event.capture_path) {
+    throw new RuntimeInvariantError("family_hint requires capture_path");
+  }
+}
+
+export function assertCapturePathAllowed(
+  capturePath: EventCapturePath,
+  allowedCapturePaths: ReadonlySet<EventCapturePath>
+): void {
+  if (!allowedCapturePaths.has(capturePath)) {
+    throw new RuntimeInvariantError(
+      `capture_path ${capturePath} is not allowed by this runtime instance`
+    );
+  }
+}
+
+export function deriveEventProvenance(event: NormalizedEvent): NormalizedEvent {
+  if (!event.capture_path) return event;
+
+  const rule = CAPTURE_PATH_RULES[event.capture_path];
+  return {
+    ...event,
+    source_kind: rule.sourceKind,
+    trust_level: rule.trustLevel,
+  };
+}
+
+export function hasTrustedUserConfirmationCapturePath(event: NormalizedEvent): boolean {
+  const capturePath = event.capture_path;
+  return (
+    event.event_type === "user_confirmation" &&
+    capturePath !== undefined &&
+    TRUSTED_USER_CONFIRMATION_CAPTURE_PATHS.has(capturePath)
+  );
+}
+
+export function hasTrustedUserMessageCapturePath(event: NormalizedEvent): boolean {
+  const capturePath = event.capture_path;
+  return (
+    event.event_type === "user_message" &&
+    capturePath !== undefined &&
+    TRUSTED_USER_MESSAGE_CAPTURE_PATHS.has(capturePath)
+  );
 }
 
 export function isExplicitVerificationStatus(
@@ -198,16 +358,11 @@ export function familyHintAllowedForEvent(
     | "open_question",
   event: NormalizedEvent
 ): boolean {
-  if (event.source_kind !== "user") return false;
-
   if (family === "current_strategy" || family === "rejected_strategy") {
-    return event.event_type === "user_confirmation" && event.trust_level === "high";
+    return hasTrustedUserConfirmationCapturePath(event);
   }
 
-  return (
-    (event.event_type === "user_message" || event.event_type === "user_confirmation") &&
-    (event.trust_level === "medium" || event.trust_level === "high")
-  );
+  return hasTrustedUserConfirmationCapturePath(event) || hasTrustedUserMessageCapturePath(event);
 }
 
 export function resolutionRuleSummary(rule: ResolutionRule): string {

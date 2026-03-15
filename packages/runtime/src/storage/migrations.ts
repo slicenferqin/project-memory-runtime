@@ -5,7 +5,12 @@ export interface SqlMigration {
   sql: string;
 }
 
-const MIGRATION_FILES = ["001_init.sql", "002_constraints.sql", "003_event_provenance.sql"];
+const MIGRATION_FILES = [
+  "001_init.sql",
+  "002_constraints.sql",
+  "003_event_provenance.sql",
+  "004_event_capture_path.sql",
+];
 
 export function loadSqlMigrations(): SqlMigration[] {
   return MIGRATION_FILES.map((fileName) => {

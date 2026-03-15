@@ -4,6 +4,7 @@ import type {
   Claim,
   ClaimStatus,
   ClaimTransition,
+  EventCapturePath,
   ExplainClaimResult,
   MarkClaimStaleInput,
   NormalizedEvent,
@@ -23,9 +24,12 @@ import { buildIngestionArtifacts } from "./ingestion/service.js";
 import { buildRecallPacket } from "./recall/packet.js";
 import { scopeSignature } from "./scope.js";
 import {
+  DEFAULT_ALLOWED_CAPTURE_PATHS,
   RuntimeInvariantError,
   assertClaimTransitionAllowed,
+  assertCapturePathAllowed,
   assertVerificationStatus,
+  deriveEventProvenance,
   validateClaimRecord,
 } from "./validation.js";
 
@@ -125,11 +129,15 @@ function buildTransition(
 
 export class ProjectMemoryRuntime {
   private readonly storage: RuntimeStorage;
+  private readonly allowedCapturePaths: ReadonlySet<EventCapturePath>;
   private initialized = false;
   private readonly adminApi: RuntimeAdminApi;
 
   constructor(config: RuntimeConfig = {}) {
     this.storage = new RuntimeStorage(config);
+    this.allowedCapturePaths = new Set(
+      config.allowed_capture_paths ?? DEFAULT_ALLOWED_CAPTURE_PATHS
+    );
     this.adminApi = {
       insertClaimRecord: (claim) => {
         this.initialize();
@@ -166,10 +174,15 @@ export class ProjectMemoryRuntime {
   recordEvent(event: NormalizedEvent): void {
     this.initialize();
     this.storage.transact(() => {
-      const inserted = this.storage.insertEventWithResult(event);
+      const normalizedEvent = deriveEventProvenance(event);
+      if (normalizedEvent.capture_path) {
+        assertCapturePathAllowed(normalizedEvent.capture_path, this.allowedCapturePaths);
+      }
+
+      const inserted = this.storage.insertEventWithResult(normalizedEvent);
       if (!inserted) return;
 
-      const artifacts = buildIngestionArtifacts(event);
+      const artifacts = buildIngestionArtifacts(normalizedEvent);
 
       for (const claim of artifacts.claims) {
         const existingClaims = this.storage.findCompatibleActiveSingletonClaims(
@@ -193,7 +206,11 @@ export class ProjectMemoryRuntime {
       }
 
       for (const outcome of artifacts.outcomes) {
-        const inferredClaimIds = this.inferOutcomeClaimIds(event, outcome, artifacts.claims);
+        const inferredClaimIds = this.inferOutcomeClaimIds(
+          normalizedEvent,
+          outcome,
+          artifacts.claims
+        );
         if (inferredClaimIds.length > 0) {
           outcome.related_claim_ids = inferredClaimIds;
         } else {
@@ -202,7 +219,7 @@ export class ProjectMemoryRuntime {
         this.applyOutcome(outcome);
       }
 
-      this.applyThreadResolutionSignals(event, artifacts.outcomes);
+      this.applyThreadResolutionSignals(normalizedEvent, artifacts.outcomes);
     });
   }
 

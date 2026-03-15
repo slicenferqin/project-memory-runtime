@@ -100,18 +100,26 @@ metadata.memory_hints = {
 - `manual_override` / `git_revert` 的 negative-memory decision 必须绑定稳定 target slot
 - 缺少 `overrides_canonical_key` 或等价稳定 key 时，只记录 outcome，不铸造 `decision.avoid.*`
 
-V1 额外要求独立 provenance：
+V1 额外要求受控 capture path：
 
 ```ts
-source_kind?: "user" | "agent" | "system" | "operator" | "imported"
-trust_level?: "low" | "medium" | "high"
+capture_path?:
+  | "fixture.user_confirmation"
+  | "fixture.user_message"
+  | "claude_code.hook.user_confirmation"
+  | "claude_code.hook.user_message"
+  | "import.transcript"
+  | "system.tool_observation"
+  | "operator.manual"
 ```
 
 解释：
 
-- runtime 不再把 `event_type` 当作 provenance
-- 是否接受 `family_hint`，由 `source_kind + trust_level + event_type` 共同决定
-- 缺少可信 provenance 的 hint 不产出 family claim
+- runtime 不再把 `source_kind` / `trust_level` 当作高价值 family 的自由上传信任输入
+- `source_kind` / `trust_level` 由 runtime 基于 `capture_path` 归一化
+- 是否接受 `family_hint`，由 `capture_path + event_type` 共同决定
+- 缺少可信 `capture_path` 的 hint 不产出 family claim
+- 默认 runtime allowlist 不直接开放正式 adapter capture path；`claude_code.hook.*` 仅用于严格受控的 reference adapter spike
 
 V1 事件类型限制：
 
@@ -120,13 +128,13 @@ V1 事件类型限制：
 - `decision.rejected_strategy`
   - 仅允许 `user_confirmation`
 - `thread.blocker`
-  - 仅允许 `source_kind=user` 且 `trust_level in {medium, high}` 的 `user_message` / `user_confirmation`
+  - 仅允许 trusted `capture_path` 下的 `user_message` / `user_confirmation`
 - `thread.open_question`
-  - 仅允许 `source_kind=user` 且 `trust_level in {medium, high}` 的 `user_message` / `user_confirmation`
+  - 仅允许 trusted `capture_path` 下的 `user_message` / `user_confirmation`
 
 热路径规则：
 
-- `user_confirmation + trust_level=high` 可直接进入 active / user_confirmed 路径
+- trusted `user_confirmation capture_path` 可直接进入 active / `user_confirmed` 路径
 - `user_message` 产出的 `thread.blocker` / `thread.open_question` 默认仅作为低信任 candidate
 - 这类 candidate 需要显式 verify 或额外证据后，才应进入 `session_brief`
 

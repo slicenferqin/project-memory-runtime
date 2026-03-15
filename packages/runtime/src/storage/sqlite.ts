@@ -111,10 +111,10 @@ export class RuntimeStorage {
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO ledger_events (
         id, ts, project_id, session_id, workspace_id, repo_id, parent_event_id, causation_id,
-        agent_id, agent_version, event_type, content, source_kind, trust_level, scope_json, metadata_json, created_at
+        agent_id, agent_version, event_type, content, capture_path, source_kind, trust_level, scope_json, metadata_json, created_at
       ) VALUES (
         @id, @ts, @project_id, @session_id, @workspace_id, @repo_id, @parent_event_id, @causation_id,
-        @agent_id, @agent_version, @event_type, @content, @source_kind, @trust_level, @scope_json, @metadata_json, @created_at
+        @agent_id, @agent_version, @event_type, @content, @capture_path, @source_kind, @trust_level, @scope_json, @metadata_json, @created_at
       )
     `);
 
@@ -131,6 +131,7 @@ export class RuntimeStorage {
       agent_version: event.agent_version,
       event_type: event.event_type,
       content: event.content,
+      capture_path: nullable(event.capture_path),
       source_kind: nullable(event.source_kind),
       trust_level: nullable(event.trust_level),
       scope_json: serializeJson(event.scope),
@@ -266,6 +267,7 @@ export class RuntimeStorage {
       agent_version: row.agent_version,
       event_type: row.event_type,
       content: row.content,
+      capture_path: row.capture_path ?? undefined,
       source_kind: row.source_kind ?? undefined,
       trust_level: row.trust_level ?? undefined,
       scope: row.scope_json ? JSON.parse(row.scope_json) : undefined,
