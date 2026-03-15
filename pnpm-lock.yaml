@@ -27,6 +27,19 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/adapters/claude-code:
+    dependencies:
+      '@slicenferqin/project-memory-runtime-core':
+        specifier: workspace:*
+        version: link:../../runtime
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   packages/runtime:
     dependencies:
       better-sqlite3:
@@ -48,6 +61,8 @@ importers:
       '@slicenferqin/project-memory-runtime-core':
         specifier: workspace:*
         version: link:../../packages/runtime
+
+  tools/memoryctl: {}
 
 packages:
 

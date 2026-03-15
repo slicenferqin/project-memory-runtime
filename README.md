@@ -132,7 +132,7 @@ project-memory-runtime/
 - 继续 harden runtime invariants
 - 扩充更高价值 claim families
 - 让 benchmark 结果稳定可复现
-- 在 runtime 足够稳之后再接 Claude Code reference adapter
+- 在 runtime 足够稳之后推进受控的 Claude Code reference adapter spike
 
 目前最常用的本地验证入口：
 
