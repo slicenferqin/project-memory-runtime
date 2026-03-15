@@ -105,10 +105,22 @@ function isSameOrDescendantPath(basePath: string, candidatePath: string): boolea
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+function sanitizeFiles(baseCwd: string | undefined, files: string[] | undefined): string[] | undefined {
+  if (!baseCwd || !files?.length) return undefined;
+
+  const normalized = files
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .map((value) => path.resolve(baseCwd, value))
+    .filter((value) => isSameOrDescendantPath(baseCwd, value));
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function buildMessageScope(context: ClaudeAdapterContext, scope?: EventScope): EventScope | undefined {
   const normalized = buildBaseScope(context) ?? {};
   // Trusted user paths must stay bound to the current session context.
-  if (scope?.files?.length) normalized.files = [...scope.files];
+  const files = sanitizeFiles(normalized.cwd, scope?.files);
+  if (files) normalized.files = files;
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
@@ -122,7 +134,8 @@ function buildToolObservationScope(
       normalized.cwd = scope.cwd;
     }
   }
-  if (scope?.files?.length) normalized.files = [...scope.files];
+  const files = sanitizeFiles(normalized.cwd, scope?.files);
+  if (files) normalized.files = files;
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
@@ -286,11 +299,6 @@ function normalizeMessageEvent(
   context: ClaudeAdapterContext,
   payload: ClaudeMessagePayload
 ): NormalizedEvent[] {
-  const capturePath: EventCapturePath =
-    payload.kind === "user_confirmation"
-      ? "claude_code.hook.user_confirmation"
-      : "claude_code.hook.user_message";
-
   return [
     {
       ...eventBase(context, {
@@ -299,7 +307,7 @@ function normalizeMessageEvent(
         content: payload.content,
       }),
       id: `evt-${hashValue([context.project_id, context.session_id, payload.kind, payload.ts ?? "", payload.content, payload.scope ?? null])}`,
-      capture_path: capturePath,
+      capture_path: "import.transcript",
       scope: buildMessageScope(context, payload.scope),
       metadata: payload.metadata,
     },

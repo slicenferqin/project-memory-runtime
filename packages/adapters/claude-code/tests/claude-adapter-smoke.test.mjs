@@ -60,10 +60,13 @@ test("claude adapter records hook and message events through runtime-first captu
   const events = runtime.listEvents("github.com/acme/demo");
 
   assert.ok(
-    events.some((event) => event.capture_path === "claude_code.hook.user_confirmation")
+    events.some((event) => event.capture_path === "import.transcript")
   );
   assert.ok(
-    events.some((event) => event.capture_path === "claude_code.hook.user_message")
+    events.some(
+      (event) =>
+        event.capture_path === "import.transcript" && event.event_type === "user_message"
+    )
   );
   assert.ok(
     events.some(
@@ -72,13 +75,13 @@ test("claude adapter records hook and message events through runtime-first captu
     )
   );
   assert.ok(
-    claims.some((claim) => claim.canonical_key === "decision.persistence.backend")
-  );
-  assert.ok(
-    claims.some((claim) => claim.canonical_key === "thread.blocker.windows.install")
+    !claims.some((claim) => claim.canonical_key === "decision.persistence.backend")
   );
   assert.ok(
     claims.some((claim) => claim.canonical_key === "thread.test.windows.install.path.normalizer")
+  );
+  assert.ok(
+    !claims.some((claim) => claim.canonical_key === "thread.blocker.windows.install")
   );
 
   runtime.close();
@@ -123,13 +126,46 @@ test("claude adapter keeps trusted message scope bound to the current session co
 
   assert.equal(events[0]?.scope?.branch, "main");
   assert.equal(events[0]?.scope?.cwd, "/repo");
-  assert.deepEqual(events[0]?.scope?.files, ["packages/windows/install.ts"]);
-  assert.equal(decision?.scope?.branch, "main");
+  assert.deepEqual(events[0]?.scope?.files, ["/repo/packages/windows/install.ts"]);
+  assert.equal(events[0]?.capture_path, "import.transcript");
+  assert.equal(decision, undefined);
   assert.ok(
     !runtime
       .listClaims("github.com/acme/demo")
       .some((claim) => claim.canonical_key === "thread.branch.fix.windows.install")
   );
+
+  runtime.close();
+});
+
+test("claude adapter drops trusted file scope entries outside the workspace root", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-files-"));
+  const adapterModule = await import("../dist/index.js");
+
+  const runtime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const adapter = new adapterModule.ClaudeCodeAdapter({
+    runtime,
+    context: {
+      project_id: "github.com/acme/demo",
+      workspace_id: "ws-1",
+      session_id: "session-files",
+      repo_id: "github.com/acme/demo",
+      branch: "main",
+      cwd: "/repo",
+    },
+  });
+
+  adapter.record({
+    kind: "user_confirmation",
+    content: "This transcript line should stay untrusted",
+    scope: {
+      files: ["/outside/repo/secret.ts", "src/in-repo.ts"],
+    },
+  });
+
+  const events = runtime.listEvents("github.com/acme/demo");
+  assert.deepEqual(events[0]?.scope?.files, ["/repo/src/in-repo.ts"]);
+  assert.equal(events[0]?.capture_path, "import.transcript");
 
   runtime.close();
 });
