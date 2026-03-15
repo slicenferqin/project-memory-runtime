@@ -78,6 +78,9 @@ active claims 评估要求：
 - 不能只按 `canonical_key` 粗粒度计分
 - 对 singleton active claims，至少要按 `canonical_key + scope` 粒度判断是否命中“当前正确条目”
 - 若 baseline 命中同一 slot 的多个候选版本，应视为未完成当前条目判定，不记为 active hit
+- keyword baseline 必须先在 raw event 上做 lexical retrieval，再将命中的 raw evidence 映射回 gold signatures
+- lexical retrieval 文本至少包含 `event.content + scope + metadata` 的可序列化文本
+- lexical retrieval query 应来自稳定的 session task 模板或 benchmark prompt，而不是 fixture 中的答案词
 
 ### 4.5 v1 通过线
 

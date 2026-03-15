@@ -49,6 +49,20 @@ function scopeSignature(scope) {
   return JSON.stringify(normalizeScope(scope));
 }
 
+function claimScopeFromEventScope(scope) {
+  if (!scope) return undefined;
+  const claimScope = {};
+  if (scope.repo) claimScope.repo = scope.repo;
+  if (scope.branch) claimScope.branch = scope.branch;
+  if (scope.cwd) claimScope.cwd_prefix = scope.cwd;
+  if (scope.files?.length) claimScope.files = [...scope.files].sort();
+  return Object.keys(claimScope).length > 0 ? claimScope : undefined;
+}
+
+function claimSignatureFromParts(canonicalKey, scope) {
+  return `${canonicalKey}@@${scopeSignature(scope)}`;
+}
+
 function claimSignature(claim) {
   return `${claim.canonical_key}@@${scopeSignature(claim.scope)}`;
 }
@@ -67,8 +81,25 @@ function computeRecall(found, expected) {
   };
 }
 
+function stableSerialize(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  if (typeof value === "object") {
+    const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, entryValue]) => `${key}:${stableSerialize(entryValue)}`).join(",")}}`;
+  }
+  return String(value);
+}
+
 function eventText(event) {
-  return event.content.toLowerCase();
+  return stableSerialize({
+    event_type: event.event_type,
+    content: event.content,
+    scope: event.scope ?? null,
+    metadata: event.metadata ?? null,
+  }).toLowerCase();
 }
 
 function rankById(packet) {
@@ -103,6 +134,111 @@ function textOverlapScore(text, query) {
   return matches / queryTerms.length;
 }
 
+function slugify(value) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "")
+    .slice(0, 80) || "unknown";
+}
+
+function extractIssueId(event) {
+  const explicit = event.metadata?.issue_id;
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  const match = event.content.match(/#(\d+)/);
+  return match?.[1];
+}
+
+function extractFailingTest(event) {
+  if (event.event_type !== "test_result") return undefined;
+  if (typeof event.metadata?.exit_code === "number" && event.metadata.exit_code === 0) return undefined;
+  const failingTest = event.metadata?.failing_test;
+  return typeof failingTest === "string" && failingTest.trim() ? failingTest.trim() : undefined;
+}
+
+function lexicalRankEvents(events, query, limit) {
+  return [...events]
+    .map((event) => ({
+      event,
+      score: textOverlapScore(eventText(event), query),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.event.ts.localeCompare(right.event.ts))
+    .slice(0, limit);
+}
+
+function sessionActivePrompt() {
+  return [
+    "Describe the current project state.",
+    "Name the package manager and default branch.",
+    "Recover the current branch-specific decisions and current strategy.",
+    "Prefer the currently active choice when multiple versions of the same decision exist.",
+  ].join(" ");
+}
+
+function sessionThreadPrompt() {
+  return [
+    "List the most important open threads.",
+    "Identify unresolved issues, failing tests, and the current hotfix branch focus.",
+  ].join(" ");
+}
+
+function inferLexicalActiveSignatures(event) {
+  const signatures = [];
+  const serialized = eventText(event);
+  const scope = claimScopeFromEventScope(event.scope);
+  const hints = event.metadata?.memory_hints ?? {};
+  const canonicalKeyHint =
+    typeof hints.canonical_key_hint === "string" ? hints.canonical_key_hint : undefined;
+  const familyHint = typeof hints.family_hint === "string" ? hints.family_hint : undefined;
+
+  if (/\b(?:pnpm|npm|yarn|bun)\b/.test(serialized)) {
+    signatures.push(claimSignatureFromParts("repo.package_manager"));
+  }
+
+  if (
+    typeof event.metadata?.default_branch === "string" &&
+    event.metadata.default_branch.trim().length > 0
+  ) {
+    signatures.push(claimSignatureFromParts("repo.default_branch"));
+  }
+
+  if (event.event_type === "user_confirmation" && canonicalKeyHint === "decision.persistence.backend") {
+    signatures.push(claimSignatureFromParts("decision.persistence.backend", scope));
+  }
+
+  if (
+    event.event_type === "user_confirmation" &&
+    familyHint === "current_strategy" &&
+    canonicalKeyHint === "install.sequence"
+  ) {
+    signatures.push(claimSignatureFromParts("decision.current_strategy.install.sequence", scope));
+  }
+
+  return signatures;
+}
+
+function inferLexicalThreadSignatures(event) {
+  const signatures = [];
+  const scope = claimScopeFromEventScope(event.scope);
+  const issueId = extractIssueId(event);
+  if (issueId) {
+    signatures.push(claimSignatureFromParts(`thread.issue.${issueId}`));
+  }
+
+  const failingTest = extractFailingTest(event);
+  if (failingTest) {
+    signatures.push(claimSignatureFromParts(`thread.test.${slugify(failingTest)}`, scope));
+  }
+
+  const branch = event.scope?.branch;
+  if (branch && /(hotfix|^fix\/|^bugfix\/)/i.test(branch)) {
+    signatures.push(claimSignatureFromParts(`thread.branch.${slugify(branch)}`, { branch }));
+  }
+
+  return signatures;
+}
+
 function runNoMemorySessionRecoveryBaseline(expectedActive, expectedThreads) {
   const runtime = createRuntime("pmr-bench-no-memory-");
   const packet = runtime.buildSessionBrief({
@@ -129,45 +265,20 @@ function runNoMemorySessionRecoveryBaseline(expectedActive, expectedThreads) {
 
 function runKeywordSessionRecoveryBaseline(runtime, expectedActive, expectedThreads) {
   const events = runtime.listEvents("github.com/acme/demo");
-  const claims = runtime.listClaims("github.com/acme/demo");
-  const rankedActiveEvents = [...events]
-    .map((event) => ({
-      event,
-      score: textOverlapScore(
-        eventText(event),
-        "current project state default branch package manager persistence baseline install sequencing current branch fix/windows-install"
-      ),
-    }))
-    .filter((entry) => entry.score > 0)
-    .sort((left, right) => right.score - left.score || left.event.ts.localeCompare(right.event.ts))
-    .slice(0, 8);
-
-  const rankedThreadEvents = [...events]
-    .map((event) => ({
-      event,
-      score: textOverlapScore(
-        eventText(event),
-        "open threads current branch focus issue failing test hotfix fix/windows-install windows installer regression"
-      ),
-    }))
-    .filter((entry) => entry.score > 0)
-    .sort((left, right) => right.score - left.score || left.event.ts.localeCompare(right.event.ts))
-    .slice(0, 6);
-
-  const activeCandidates = claims.filter((claim) => claim.type !== "thread");
-  const threadCandidates = claims.filter((claim) => claim.type === "thread");
+  const rankedActiveEvents = lexicalRankEvents(events, sessionActivePrompt(), 8);
+  const rankedThreadEvents = lexicalRankEvents(events, sessionThreadPrompt(), 6);
 
   const activeSlotCandidates = new Map();
   const activeSlotOrder = [];
   for (const { event } of rankedActiveEvents) {
-    const linkedClaims = activeCandidates.filter((claim) => claim.source_event_ids.includes(event.id));
-    for (const claim of linkedClaims) {
-      const slot = claim.canonical_key;
+    const signatures = inferLexicalActiveSignatures(event);
+    for (const signature of signatures) {
+      const [slot] = signature.split("@@");
       if (!activeSlotCandidates.has(slot)) {
         activeSlotCandidates.set(slot, new Set());
         activeSlotOrder.push(slot);
       }
-      activeSlotCandidates.get(slot).add(claimSignature(claim));
+      activeSlotCandidates.get(slot).add(signature);
     }
   }
 
@@ -181,9 +292,8 @@ function runKeywordSessionRecoveryBaseline(runtime, expectedActive, expectedThre
   const threadFound = [];
   const seenThreadSignatures = new Set();
   for (const { event } of rankedThreadEvents) {
-    const linkedClaims = threadCandidates.filter((claim) => claim.source_event_ids.includes(event.id));
-    for (const claim of linkedClaims) {
-      const signature = claimSignature(claim);
+    const signatures = inferLexicalThreadSignatures(event);
+    for (const signature of signatures) {
       if (seenThreadSignatures.has(signature)) continue;
       seenThreadSignatures.add(signature);
       threadFound.push(signature);
