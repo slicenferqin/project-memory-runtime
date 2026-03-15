@@ -73,6 +73,12 @@ Session recovery benchmark 的标准答案应来自以下二选一：
 - 重复追问减少率
 - open thread 恢复率
 
+active claims 评估要求：
+
+- 不能只按 `canonical_key` 粗粒度计分
+- 对 singleton active claims，至少要按 `canonical_key + scope` 粒度判断是否命中“当前正确条目”
+- 若 baseline 命中同一 slot 的多个候选版本，应视为未完成当前条目判定，不记为 active hit
+
 ### 4.5 v1 通过线
 
 runtime hardening 通过线：

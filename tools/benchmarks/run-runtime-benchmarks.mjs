@@ -35,6 +35,24 @@ function round(value) {
   return Number(value.toFixed(4));
 }
 
+function normalizeScope(scope) {
+  if (!scope) return null;
+  const normalized = {};
+  if (scope.repo) normalized.repo = scope.repo;
+  if (scope.branch) normalized.branch = scope.branch;
+  if (scope.cwd_prefix) normalized.cwd_prefix = scope.cwd_prefix;
+  if (scope.files?.length) normalized.files = [...scope.files].sort();
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function scopeSignature(scope) {
+  return JSON.stringify(normalizeScope(scope));
+}
+
+function claimSignature(claim) {
+  return `${claim.canonical_key}@@${scopeSignature(claim.scope)}`;
+}
+
 function canonicalKeys(claims) {
   return claims.map((claim) => claim.canonical_key);
 }
@@ -50,10 +68,7 @@ function computeRecall(found, expected) {
 }
 
 function eventText(event) {
-  return JSON.stringify({
-    content: event.content,
-    metadata: event.metadata ?? {},
-  }).toLowerCase();
+  return event.content.toLowerCase();
 }
 
 function rankById(packet) {
@@ -69,6 +84,25 @@ function requireValue(value, message) {
   return value;
 }
 
+function tokenize(text) {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9/.-]+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function textOverlapScore(text, query) {
+  const queryTerms = tokenize(query);
+  if (queryTerms.length === 0) return 0;
+  const haystack = new Set(tokenize(text));
+  let matches = 0;
+  for (const term of queryTerms) {
+    if (haystack.has(term)) matches += 1;
+  }
+  return matches / queryTerms.length;
+}
+
 function runNoMemorySessionRecoveryBaseline(expectedActive, expectedThreads) {
   const runtime = createRuntime("pmr-bench-no-memory-");
   const packet = runtime.buildSessionBrief({
@@ -77,8 +111,14 @@ function runNoMemorySessionRecoveryBaseline(expectedActive, expectedThreads) {
     scope: { branch: "fix/windows-install" },
   });
 
-  const activeRecall = computeRecall(canonicalKeys(packet.active_claims), expectedActive);
-  const threadRecall = computeRecall(canonicalKeys(packet.open_threads), expectedThreads);
+  const activeRecall = computeRecall(
+    packet.active_claims.map(claimSignature),
+    expectedActive
+  );
+  const threadRecall = computeRecall(
+    packet.open_threads.map(claimSignature),
+    expectedThreads
+  );
   runtime.close();
 
   return {
@@ -89,29 +129,66 @@ function runNoMemorySessionRecoveryBaseline(expectedActive, expectedThreads) {
 
 function runKeywordSessionRecoveryBaseline(runtime, expectedActive, expectedThreads) {
   const events = runtime.listEvents("github.com/acme/demo");
-  const blobs = events.map(eventText);
+  const claims = runtime.listClaims("github.com/acme/demo");
+  const rankedActiveEvents = [...events]
+    .map((event) => ({
+      event,
+      score: textOverlapScore(
+        eventText(event),
+        "current project state default branch package manager persistence baseline install sequencing current branch fix/windows-install"
+      ),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.event.ts.localeCompare(right.event.ts))
+    .slice(0, 8);
 
-  const activeTerms = new Map([
-    ["repo.package_manager", ["pnpm"]],
-    ["repo.test_framework", ["vitest"]],
-    ["decision.avoid.decision.persistence.backend", ["json backend", "reverted"]],
-  ]);
-  const threadTerms = new Map([
-    ["thread.issue.42", ["issue #42"]],
-    ["thread.test.windows.install.path.normalizer", ["windows install path normalizer"]],
-    ["thread.branch.fix.windows.install", ["fix/windows-install"]],
-  ]);
+  const rankedThreadEvents = [...events]
+    .map((event) => ({
+      event,
+      score: textOverlapScore(
+        eventText(event),
+        "open threads current branch focus issue failing test hotfix fix/windows-install windows installer regression"
+      ),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.event.ts.localeCompare(right.event.ts))
+    .slice(0, 6);
 
-  const activeFound = expectedActive.filter((key) =>
-    (activeTerms.get(key) ?? []).every((term) =>
-      blobs.some((blob) => blob.includes(term))
-    )
-  );
-  const threadFound = expectedThreads.filter((key) =>
-    (threadTerms.get(key) ?? []).every((term) =>
-      blobs.some((blob) => blob.includes(term))
-    )
-  );
+  const activeCandidates = claims.filter((claim) => claim.type !== "thread");
+  const threadCandidates = claims.filter((claim) => claim.type === "thread");
+
+  const activeSlotCandidates = new Map();
+  const activeSlotOrder = [];
+  for (const { event } of rankedActiveEvents) {
+    const linkedClaims = activeCandidates.filter((claim) => claim.source_event_ids.includes(event.id));
+    for (const claim of linkedClaims) {
+      const slot = claim.canonical_key;
+      if (!activeSlotCandidates.has(slot)) {
+        activeSlotCandidates.set(slot, new Set());
+        activeSlotOrder.push(slot);
+      }
+      activeSlotCandidates.get(slot).add(claimSignature(claim));
+    }
+  }
+
+  const activeFound = [];
+  for (const slot of activeSlotOrder) {
+    const signatures = [...activeSlotCandidates.get(slot)];
+    // Raw keyword retrieval cannot disambiguate a singleton slot if multiple scoped/state variants surface.
+    if (signatures.length === 1) activeFound.push(signatures[0]);
+  }
+
+  const threadFound = [];
+  const seenThreadSignatures = new Set();
+  for (const { event } of rankedThreadEvents) {
+    const linkedClaims = threadCandidates.filter((claim) => claim.source_event_ids.includes(event.id));
+    for (const claim of linkedClaims) {
+      const signature = claimSignature(claim);
+      if (seenThreadSignatures.has(signature)) continue;
+      seenThreadSignatures.add(signature);
+      threadFound.push(signature);
+    }
+  }
 
   return {
     activeRecall: computeRecall(activeFound, expectedActive),
@@ -132,13 +209,25 @@ function runSessionRecoveryBenchmark() {
     content: "The repo uses pnpm and vitest. Run pnpm build.",
   });
   runtime.recordEvent({
+    id: "evt-default-branch",
+    ts: "2026-03-12T00:00:00.500Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "agent_message",
+    content: "Repository settings synced from origin.",
+    metadata: {
+      default_branch: "main",
+    },
+  });
+  runtime.recordEvent({
     id: "evt-issue",
     ts: "2026-03-12T00:00:01.000Z",
     project_id: "github.com/acme/demo",
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "issue_link",
-    content: "Tracking issue #42",
+    content: "Tracking issue #42: installer regression remains unresolved",
     metadata: { issue_id: "42" },
   });
   runtime.recordEvent({
@@ -148,7 +237,7 @@ function runSessionRecoveryBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "test_result",
-    content: "Test run failed",
+    content: "Hotfix branch still fails the Windows installer regression test.",
     scope: { branch: "fix/windows-install" },
     metadata: {
       exit_code: 1,
@@ -156,14 +245,15 @@ function runSessionRecoveryBenchmark() {
     },
   });
   runtime.recordEvent({
-    id: "evt-decision",
+    id: "evt-backend-main",
     ts: "2026-03-12T00:00:03.000Z",
     project_id: "github.com/acme/demo",
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "user_confirmation",
     capture_path: "fixture.user_confirmation",
-    content: "Use SQLite as the first persistence backend",
+    scope: { branch: "main" },
+    content: "Approved the persistence baseline.",
     metadata: {
       memory_hints: {
         canonical_key_hint: "decision.persistence.backend",
@@ -171,16 +261,53 @@ function runSessionRecoveryBenchmark() {
     },
   });
   runtime.recordEvent({
-    id: "evt-override",
-    ts: "2026-03-12T00:00:04.000Z",
+    id: "evt-backend-hotfix",
+    ts: "2026-03-12T00:00:03.200Z",
     project_id: "github.com/acme/demo",
     agent_id: "claude-code",
     agent_version: "unknown",
-    event_type: "manual_override",
-    capture_path: "operator.manual",
-    content: "The previous JSON backend approach was reverted",
+    event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
+    scope: { branch: "fix/windows-install" },
+    content: "Approved the persistence baseline.",
     metadata: {
-      overrides_canonical_key: "decision.persistence.backend",
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+  runtime.recordEvent({
+    id: "evt-sequence-main",
+    ts: "2026-03-12T00:00:03.400Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
+    scope: { branch: "main" },
+    content: "Approved the install sequencing plan.",
+    metadata: {
+      memory_hints: {
+        family_hint: "current_strategy",
+        canonical_key_hint: "install.sequence",
+      },
+    },
+  });
+  runtime.recordEvent({
+    id: "evt-sequence-hotfix",
+    ts: "2026-03-12T00:00:03.600Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
+    scope: { branch: "fix/windows-install" },
+    content: "Approved the install sequencing plan.",
+    metadata: {
+      memory_hints: {
+        family_hint: "current_strategy",
+        canonical_key_hint: "install.sequence",
+      },
     },
   });
 
@@ -190,19 +317,38 @@ function runSessionRecoveryBenchmark() {
     scope: { branch: "fix/windows-install" },
   });
 
+  const findClaim = (canonicalKey, expectedScope) => {
+    const claim = runtime
+      .listClaims("github.com/acme/demo")
+      .find(
+        (entry) =>
+          entry.canonical_key === canonicalKey &&
+          scopeSignature(entry.scope) === scopeSignature(expectedScope)
+      );
+    return requireValue(
+      claim,
+      `missing claim ${canonicalKey} @ ${scopeSignature(expectedScope)}`
+    );
+  };
+
   const activeExpected = [
-    "repo.package_manager",
-    "repo.test_framework",
-    "decision.avoid.decision.persistence.backend",
+    claimSignature(findClaim("repo.package_manager")),
+    claimSignature(findClaim("repo.default_branch")),
+    claimSignature(findClaim("decision.persistence.backend", { branch: "fix/windows-install" })),
+    claimSignature(
+      findClaim("decision.current_strategy.install.sequence", { branch: "fix/windows-install" })
+    ),
   ];
   const threadExpected = [
-    "thread.issue.42",
-    "thread.test.windows.install.path.normalizer",
-    "thread.branch.fix.windows.install",
+    claimSignature(findClaim("thread.issue.42")),
+    claimSignature(
+      findClaim("thread.test.windows.install.path.normalizer", { branch: "fix/windows-install" })
+    ),
+    claimSignature(findClaim("thread.branch.fix.windows.install", { branch: "fix/windows-install" })),
   ];
 
-  const activeRecall = computeRecall(canonicalKeys(packet.active_claims), activeExpected);
-  const threadRecall = computeRecall(canonicalKeys(packet.open_threads), threadExpected);
+  const activeRecall = computeRecall(packet.active_claims.map(claimSignature), activeExpected);
+  const threadRecall = computeRecall(packet.open_threads.map(claimSignature), threadExpected);
   const noMemoryBaseline = runNoMemorySessionRecoveryBaseline(activeExpected, threadExpected);
   const keywordBaseline = runKeywordSessionRecoveryBaseline(runtime, activeExpected, threadExpected);
   const activeDeltaVsKeyword = activeRecall.recall - keywordBaseline.activeRecall.recall;
@@ -243,7 +389,9 @@ function runSessionRecoveryBenchmark() {
     packet: {
       brief: packet.brief,
       active_claim_keys: canonicalKeys(packet.active_claims),
+      active_claim_signatures: packet.active_claims.map(claimSignature),
       open_thread_keys: canonicalKeys(packet.open_threads),
+      open_thread_signatures: packet.open_threads.map(claimSignature),
     },
   };
 }
