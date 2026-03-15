@@ -293,6 +293,11 @@ V1 明确：
 - `manual_override`
 - `human_corrected`
 
+额外约束：
+
+- `manual_override` / `human_corrected` 对应的原始事件只有来自 trusted negative-lifecycle `capture_path` 时，才允许真正驱动 `active -> stale` 或负向记忆生成
+- 缺少可信 `capture_path` 时，事件可以保留在 ledger 中，但不得直接改写 claim lifecycle
+
 ---
 
 ## 10. 状态机与 recall 的关系

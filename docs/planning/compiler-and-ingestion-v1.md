@@ -26,6 +26,7 @@
 - LLM 只作为受控增强层
 - 编译流程必须幂等
 - 高价值 `user_confirmation` / `family_hint` 只接受 allowlisted capture path
+- `manual_override` / `human_edit_after_agent` 只有 trusted negative-lifecycle capture path 才允许改变 claim lifecycle
 
 ---
 
@@ -37,6 +38,7 @@
 2. adapter 生成 `NormalizedEvent`
    - 高信任事件先补齐 `capture_path`
    - `source_kind` / `trust_level` 由 runtime 基于 `capture_path` 归一化
+   - `manual_override` / `human_edit_after_agent` 若无 trusted negative-lifecycle `capture_path`，只允许落 raw evidence，不得直接生成 outcome / negative-memory claim
 3. runtime 执行 idempotent write 到 `ledger_events`
 4. compiler 根据事件类型选择：
    - 即时增量编译

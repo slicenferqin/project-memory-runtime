@@ -177,6 +177,7 @@ function runSessionRecoveryBenchmark() {
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "manual_override",
+    capture_path: "operator.manual",
     content: "The previous JSON backend approach was reverted",
     metadata: {
       overrides_canonical_key: "decision.persistence.backend",
@@ -206,16 +207,21 @@ function runSessionRecoveryBenchmark() {
   const keywordBaseline = runKeywordSessionRecoveryBaseline(runtime, activeExpected, threadExpected);
   const activeDeltaVsKeyword = activeRecall.recall - keywordBaseline.activeRecall.recall;
   const threadDeltaVsKeyword = threadRecall.recall - keywordBaseline.threadRecall.recall;
-  const pass =
+  const runtimeHardeningPass =
     activeRecall.recall >= 0.66 &&
     threadRecall.recall >= 0.8 &&
     (activeDeltaVsKeyword > 0 || threadDeltaVsKeyword > 0);
+  const adapterReadinessPass =
+    activeRecall.recall >= 0.66 &&
+    threadRecall.recall >= 0.8 &&
+    activeDeltaVsKeyword > 0;
 
   runtime.close();
 
   return {
     name: "session_recovery",
-    pass,
+    pass: runtimeHardeningPass,
+    adapter_readiness_pass: adapterReadinessPass,
     metrics: {
       active_claim_recall: round(activeRecall.recall),
       open_thread_recall: round(threadRecall.recall),
@@ -430,6 +436,7 @@ function runOutcomeLearningBenchmark() {
       agent_id: "claude-code",
       agent_version: "unknown",
       event_type: "manual_override",
+      capture_path: "operator.manual",
       content: "Negative strategy was overridden",
       metadata: {
         related_claim_ids: [negativeClaimId],
@@ -727,14 +734,20 @@ function buildMarkdown(results) {
     "",
     `Generated at: ${results.generated_at}`,
     "",
-    `Overall: ${results.overall_pass ? "PASS" : "FAIL"}`,
+    `Runtime hardening: ${results.overall_pass ? "PASS" : "FAIL"}`,
+    `Adapter readiness: ${results.adapter_readiness_pass ? "PASS" : "FAIL"}`,
     "",
   ];
 
   for (const suite of results.suites) {
     lines.push(`## ${suite.name}`);
     lines.push("");
-    lines.push(`Status: ${suite.pass ? "PASS" : "FAIL"}`);
+    lines.push(`Runtime hardening status: ${suite.pass ? "PASS" : "FAIL"}`);
+    if (suite.adapter_readiness_pass !== undefined) {
+      lines.push(
+        `Adapter readiness status: ${suite.adapter_readiness_pass ? "PASS" : "FAIL"}`
+      );
+    }
     lines.push("");
     lines.push("| Metric | Value |");
     lines.push("| --- | --- |");
@@ -757,6 +770,9 @@ const suites = [
 const results = {
   generated_at: new Date().toISOString(),
   overall_pass: suites.every((suite) => suite.pass),
+  adapter_readiness_pass: suites.every(
+    (suite) => (suite.adapter_readiness_pass ?? suite.pass)
+  ),
   suites,
 };
 
@@ -771,6 +787,7 @@ fs.writeFileSync(markdownPath, buildMarkdown(results));
 
 console.log(JSON.stringify({
   overall_pass: results.overall_pass,
+  adapter_readiness_pass: results.adapter_readiness_pass,
   json: jsonPath,
   markdown: markdownPath,
 }, null, 2));

@@ -9,6 +9,11 @@ Current suites:
 - outcome learning
 - multi-agent consistency
 
+Current outputs distinguish:
+
+- `overall_pass`: runtime hardening gate
+- `adapter_readiness_pass`: stricter pre-adapter gate
+
 Run from repo root:
 
 ```bash

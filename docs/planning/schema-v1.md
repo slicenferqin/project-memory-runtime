@@ -129,6 +129,7 @@ type EventCapturePath =
 - `capture_path` 必须来自 runtime 认可的闭集
 - runtime instance 可以进一步配置 allowlist，默认不会直接开放正式 adapter capture path
 - `claude_code.hook.*` 属于 reference adapter spike 路径，不代表 runtime 已进入正式 adapter 阶段
+- `manual_override` / `human_edit_after_agent` 只有 trusted negative-lifecycle `capture_path` 才允许生成 outcome 或改变 claim lifecycle
 
 ### 3.6 Required metadata for command-like events
 

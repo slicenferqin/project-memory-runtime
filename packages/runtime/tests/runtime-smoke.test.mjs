@@ -125,6 +125,7 @@ test("runtime records deterministic fact, thread, decision and outcome artifacts
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "manual_override",
+    capture_path: "operator.manual",
     content: "The previous JSON backend approach was reverted",
     metadata: {
       overrides_canonical_key: "decision.persistence.backend",
@@ -172,6 +173,7 @@ test("runtime does not materialize negative-memory decisions without a stable ta
     agent_id: "claude-code",
     agent_version: "unknown",
     event_type: "manual_override",
+    capture_path: "operator.manual",
     content: "Negative strategy was overridden",
   });
 
@@ -180,6 +182,119 @@ test("runtime does not materialize negative-memory decisions without a stable ta
     !claims.some((claim) => claim.canonical_key.startsWith("decision.avoid."))
   );
   assert.ok(runtime.listOutcomes("github.com/acme/demo").length > 0);
+
+  runtime.close();
+});
+
+test("runtime ignores untrusted negative lifecycle events for outcome and avoid-claim mutation", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-untrusted-negative-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+
+  runtime.recordEvent({
+    id: "evt-decision",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
+    content: "Use SQLite as the first persistence backend",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+
+  runtime.recordEvent({
+    id: "evt-untrusted-override",
+    ts: "2026-03-12T00:00:01.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "adapter",
+    agent_version: "unknown",
+    event_type: "manual_override",
+    content: "A transcript import claims the strategy was overridden",
+    metadata: {
+      overrides_canonical_key: "decision.persistence.backend",
+      related_claim_ids: ["evt-decision"],
+    },
+  });
+
+  runtime.recordEvent({
+    id: "evt-untrusted-human-corrected",
+    ts: "2026-03-12T00:00:02.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "adapter",
+    agent_version: "unknown",
+    event_type: "human_edit_after_agent",
+    content: "A transcript import claims the agent output was manually corrected",
+    metadata: {
+      related_claim_ids: ["evt-decision"],
+    },
+  });
+
+  const claims = runtime.listClaims("github.com/acme/demo");
+  const outcomes = runtime.listOutcomes("github.com/acme/demo");
+  const decision = claims.find((claim) => claim.canonical_key === "decision.persistence.backend");
+
+  assert.equal(decision?.status, "active");
+  assert.ok(
+    !claims.some((claim) => claim.canonical_key === "decision.avoid.decision.persistence.backend")
+  );
+  assert.ok(!outcomes.some((outcome) => outcome.outcome_type === "manual_override"));
+  assert.ok(!outcomes.some((outcome) => outcome.outcome_type === "human_corrected"));
+
+  runtime.close();
+});
+
+test("runtime applies trusted negative lifecycle events from operator capture path", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-trusted-negative-"));
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+
+  runtime.recordEvent({
+    id: "evt-decision",
+    ts: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "claude-code",
+    agent_version: "unknown",
+    event_type: "user_confirmation",
+    capture_path: "fixture.user_confirmation",
+    content: "Use SQLite as the first persistence backend",
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+
+  runtime.recordEvent({
+    id: "evt-trusted-override",
+    ts: "2026-03-12T00:00:01.000Z",
+    project_id: "github.com/acme/demo",
+    agent_id: "memoryctl",
+    agent_version: "unknown",
+    event_type: "manual_override",
+    capture_path: "operator.manual",
+    content: "Operator explicitly overrode the previous backend decision",
+    metadata: {
+      overrides_canonical_key: "decision.persistence.backend",
+    },
+  });
+
+  const claims = runtime.listClaims("github.com/acme/demo");
+  const outcomes = runtime.listOutcomes("github.com/acme/demo");
+  const decision = claims.find((claim) => claim.canonical_key === "decision.persistence.backend");
+  const avoid = claims.find(
+    (claim) => claim.canonical_key === "decision.avoid.decision.persistence.backend"
+  );
+
+  assert.equal(decision?.status, "stale");
+  assert.equal(avoid?.status, "active");
+  assert.ok(outcomes.some((outcome) => outcome.outcome_type === "manual_override"));
 
   runtime.close();
 });

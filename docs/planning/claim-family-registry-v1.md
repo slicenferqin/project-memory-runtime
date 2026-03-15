@@ -99,6 +99,7 @@ metadata.memory_hints = {
 - `family_hint` 不是 claim 直写后门
 - `manual_override` / `git_revert` 的 negative-memory decision 必须绑定稳定 target slot
 - 缺少 `overrides_canonical_key` 或等价稳定 key 时，只记录 outcome，不铸造 `decision.avoid.*`
+- `manual_override` 还必须来自 trusted negative-lifecycle `capture_path`；否则只记录 raw evidence，不生成 outcome，也不铸造 `decision.avoid.*`
 
 V1 额外要求受控 capture path：
 

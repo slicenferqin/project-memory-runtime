@@ -120,6 +120,7 @@ interface CaptureAdapter {
 - 若提供 `metadata.memory_hints.family_hint` 或高信任 `user_confirmation`，必须同时提供 `capture_path`
 - `capture_path` 必须来自 runtime 支持的闭集；`source_kind` / `trust_level` 由 runtime 基于 `capture_path` 归一化
 - 正式 adapter capture path 默认不在 runtime allowlist 中；reference adapter spike 需要显式开启
+- `manual_override` / `human_edit_after_agent` 属于高破坏 lifecycle 事件；无 trusted negative-lifecycle `capture_path` 时，只允许记录 raw evidence，不允许直接驱动 outcome / stale / avoid-memory
 
 ---
 

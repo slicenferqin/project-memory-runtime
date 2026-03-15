@@ -75,9 +75,16 @@ Session recovery benchmark 的标准答案应来自以下二选一：
 
 ### 4.5 v1 通过线
 
+runtime hardening 通过线：
+
 - open thread 恢复率 >= 0.8
 - 重复提问率相对 baseline 降低 >= 30%
 - 至少一项 session recovery 指标相对 keyword baseline 为正向 delta
+
+adapter readiness 额外通过线：
+
+- active claim 恢复率维度相对 keyword baseline 必须为正向 delta
+- 若仅 open thread 维度优于 keyword baseline，则只能说明 runtime hardening 通过，不能说明 adapter readiness 通过
 
 ---
 
@@ -269,6 +276,7 @@ runtime-only benchmark 约束：
 - outcome benchmark 应额外记录 memory growth / packet pollution 指标
 - repo 本地 `tmp/benchmarks/*` 仅是临时输出，不是项目证据源
 - go / no-go 结论应以 Node 20 CI 生成的 benchmark artifact 为准
+- benchmark 结果应显式区分 `runtime hardening` 与 `adapter readiness` 两套门槛，避免拿 runtime-only 绿灯替代 adapter 放行
 
 ---
 

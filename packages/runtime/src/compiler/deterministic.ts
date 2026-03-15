@@ -3,6 +3,7 @@ import type { Claim, ClaimScope, NormalizedEvent, Outcome, ResolutionRule } from
 import { normalizeClaimScope } from "../scope.js";
 import {
   familyHintAllowedForEvent,
+  hasTrustedNegativeLifecycleCapturePath,
   hasTrustedUserConfirmationCapturePath,
 } from "../validation.js";
 
@@ -264,6 +265,9 @@ function buildHintedFamilyClaim(event: NormalizedEvent): Claim | null {
 
 function buildNegativeMemoryDecision(event: NormalizedEvent): Claim | null {
   if (!["git_revert", "manual_override"].includes(event.event_type)) return null;
+  if (event.event_type === "manual_override" && !hasTrustedNegativeLifecycleCapturePath(event)) {
+    return null;
+  }
 
   const hints = (event.metadata?.memory_hints ?? {}) as MemoryHints;
   const overrideKey =
@@ -374,6 +378,12 @@ function buildOutcome(event: NormalizedEvent, explicitType?: Outcome["outcome_ty
 
   const outcomeType = explicitType ?? mapByEventType[event.event_type];
   if (!outcomeType) return null;
+  if (
+    (outcomeType === "manual_override" || outcomeType === "human_corrected") &&
+    !hasTrustedNegativeLifecycleCapturePath(event)
+  ) {
+    return null;
+  }
 
   return {
     id: hashId("outcome", event.id, outcomeType),

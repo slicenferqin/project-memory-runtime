@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-03-15T00:44:09.583Z",
+  "environment": {
+    "node": "20.17.0",
+    "pnpm": "9.0.0"
+  },
+  "overall_pass": true,
+  "adapter_readiness_pass": false,
+  "suites": [
+    {
+      "name": "session_recovery",
+      "pass": true,
+      "adapter_readiness_pass": false,
+      "metrics": {
+        "active_claim_recall": 1,
+        "open_thread_recall": 1,
+        "active_claim_recall_delta_vs_no_memory": 1,
+        "open_thread_recall_delta_vs_no_memory": 1,
+        "active_claim_recall_delta_vs_keyword": 0,
+        "open_thread_recall_delta_vs_keyword": 0.3333,
+        "active_claim_hits": 3,
+        "open_thread_hits": 3
+      }
+    },
+    {
+      "name": "stale_suppression",
+      "pass": true,
+      "metrics": {
+        "superseded_leakage": 0,
+        "stale_selected": 0,
+        "active_replacement_rank": 0,
+        "stale_rank": -1
+      }
+    },
+    {
+      "name": "outcome_learning",
+      "pass": true,
+      "metrics": {
+        "positive_rank_delta": 2,
+        "negative_rank_delta": 1,
+        "rounds": 3,
+        "avoidance_claim_growth": 0,
+        "avoidance_claim_history_count": 0,
+        "packet_pollution_count": 0,
+        "final_positive_rank": 0,
+        "final_negative_rank": 2
+      }
+    },
+    {
+      "name": "multi_agent_consistency",
+      "pass": true,
+      "metrics": {
+        "active_decision_mismatch": 0,
+        "open_thread_divergence": 0,
+        "clone_consistency": 1,
+        "worktree_isolation": 1,
+        "subproject_isolation": 1
+      }
+    }
+  ]
+}

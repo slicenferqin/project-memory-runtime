@@ -154,6 +154,10 @@ const TRUSTED_USER_MESSAGE_CAPTURE_PATHS = new Set<EventCapturePath>([
   "claude_code.hook.user_message",
 ]);
 
+const TRUSTED_NEGATIVE_LIFECYCLE_CAPTURE_PATHS = new Set<EventCapturePath>([
+  "operator.manual",
+]);
+
 export const DEFAULT_ALLOWED_CAPTURE_PATHS: EventCapturePath[] = [
   "fixture.user_confirmation",
   "fixture.user_message",
@@ -341,6 +345,16 @@ export function hasTrustedUserMessageCapturePath(event: NormalizedEvent): boolea
     event.event_type === "user_message" &&
     capturePath !== undefined &&
     TRUSTED_USER_MESSAGE_CAPTURE_PATHS.has(capturePath)
+  );
+}
+
+export function hasTrustedNegativeLifecycleCapturePath(event: NormalizedEvent): boolean {
+  const capturePath = event.capture_path;
+  return (
+    (event.event_type === "manual_override" ||
+      event.event_type === "human_edit_after_agent") &&
+    capturePath !== undefined &&
+    TRUSTED_NEGATIVE_LIFECYCLE_CAPTURE_PATHS.has(capturePath)
   );
 }
 
