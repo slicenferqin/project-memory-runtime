@@ -84,6 +84,56 @@ test("claude adapter records hook and message events through runtime-first captu
   runtime.close();
 });
 
+test("claude adapter keeps trusted message scope bound to the current session context", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-scope-"));
+  const adapterModule = await import("../dist/index.js");
+
+  const runtime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const adapter = new adapterModule.ClaudeCodeAdapter({
+    runtime,
+    context: {
+      project_id: "github.com/acme/demo",
+      workspace_id: "ws-1",
+      session_id: "session-branch-main",
+      repo_id: "github.com/acme/demo",
+      branch: "main",
+      cwd: "/repo",
+    },
+  });
+
+  adapter.record({
+    kind: "user_confirmation",
+    content: "Use SQLite as the first persistence backend",
+    scope: {
+      branch: "fix/windows-install",
+      cwd: "/repo/hotfix",
+      files: ["packages/windows/install.ts"],
+    },
+    metadata: {
+      memory_hints: {
+        canonical_key_hint: "decision.persistence.backend",
+      },
+    },
+  });
+
+  const events = runtime.listEvents("github.com/acme/demo");
+  const decision = runtime
+    .listClaims("github.com/acme/demo")
+    .find((claim) => claim.canonical_key === "decision.persistence.backend");
+
+  assert.equal(events[0]?.scope?.branch, "main");
+  assert.equal(events[0]?.scope?.cwd, "/repo");
+  assert.deepEqual(events[0]?.scope?.files, ["packages/windows/install.ts"]);
+  assert.equal(decision?.scope?.branch, "main");
+  assert.ok(
+    !runtime
+      .listClaims("github.com/acme/demo")
+      .some((claim) => claim.canonical_key === "thread.branch.fix.windows.install")
+  );
+
+  runtime.close();
+});
+
 test("claude adapter injects session brief once per unchanged packet", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-brief-"));
   const adapterModule = await import("../dist/index.js");
@@ -145,6 +195,82 @@ test("claude adapter does not emit unsupported destructive lifecycle events from
 
   assert.deepEqual(events, []);
   assert.equal(runtime.listEvents("github.com/acme/demo").length, 0);
+
+  runtime.close();
+});
+
+test("claude adapter downgrades failed git revert attempts to command_result", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-git-revert-"));
+  const adapterModule = await import("../dist/index.js");
+
+  const runtime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const adapter = new adapterModule.ClaudeCodeAdapter({
+    runtime,
+    context: {
+      project_id: "github.com/acme/demo",
+      workspace_id: "ws-1",
+      session_id: "session-git-revert",
+      repo_id: "github.com/acme/demo",
+      branch: "main",
+    },
+  });
+
+  adapter.record({
+    hook: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: {
+      command: "git revert HEAD",
+      cwd: "/repo",
+    },
+    tool_output: {
+      stdout: "error: your local changes would be overwritten by revert",
+    },
+    exit_code: 1,
+  });
+
+  const events = runtime.listEvents("github.com/acme/demo");
+  const outcomes = runtime.listOutcomes("github.com/acme/demo");
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.event_type, "command_result");
+  assert.ok(!outcomes.some((outcome) => outcome.outcome_type === "commit_reverted"));
+
+  runtime.close();
+});
+
+test("claude adapter only promotes successful git revert with verifiable output", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-git-revert-ok-"));
+  const adapterModule = await import("../dist/index.js");
+
+  const runtime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const adapter = new adapterModule.ClaudeCodeAdapter({
+    runtime,
+    context: {
+      project_id: "github.com/acme/demo",
+      workspace_id: "ws-1",
+      session_id: "session-git-revert-ok",
+      repo_id: "github.com/acme/demo",
+      branch: "main",
+    },
+  });
+
+  adapter.record({
+    hook: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: {
+      command: "git revert HEAD",
+      cwd: "/repo",
+    },
+    tool_output: {
+      stdout: "[main 1234567] Revert \"Use wrong backend\"\n 1 file changed, 2 insertions(+), 2 deletions(-)\nThis reverts commit abcdef0.",
+    },
+    exit_code: 0,
+  });
+
+  const events = runtime.listEvents("github.com/acme/demo");
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.event_type, "git_revert");
 
   runtime.close();
 });

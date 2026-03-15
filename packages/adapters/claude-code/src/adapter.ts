@@ -92,14 +92,36 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function buildScope(context: ClaudeAdapterContext, scope?: EventScope): EventScope | undefined {
+function buildBaseScope(context: ClaudeAdapterContext): EventScope | undefined {
   const normalized: EventScope = {};
   if (context.repo_id) normalized.repo = context.repo_id;
   if (context.branch) normalized.branch = context.branch;
   if (context.cwd) normalized.cwd = context.cwd;
-  if (scope?.repo) normalized.repo = scope.repo;
-  if (scope?.branch) normalized.branch = scope.branch;
-  if (scope?.cwd) normalized.cwd = scope.cwd;
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function isSameOrDescendantPath(basePath: string, candidatePath: string): boolean {
+  const relative = path.relative(basePath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function buildMessageScope(context: ClaudeAdapterContext, scope?: EventScope): EventScope | undefined {
+  const normalized = buildBaseScope(context) ?? {};
+  // Trusted user paths must stay bound to the current session context.
+  if (scope?.files?.length) normalized.files = [...scope.files];
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function buildToolObservationScope(
+  context: ClaudeAdapterContext,
+  scope?: EventScope
+): EventScope | undefined {
+  const normalized = buildBaseScope(context) ?? {};
+  if (scope?.cwd) {
+    if (!normalized.cwd || isSameOrDescendantPath(normalized.cwd, scope.cwd)) {
+      normalized.cwd = scope.cwd;
+    }
+  }
   if (scope?.files?.length) normalized.files = [...scope.files];
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
@@ -121,7 +143,19 @@ function eventBase(
   };
 }
 
-function classifyBashCommand(command: string): NormalizedEvent["event_type"] {
+function looksLikeSuccessfulGitCommit(output: string): boolean {
+  return /^\[[^\]]+\]\s+/m.test(output) || /\bfiles? changed\b/i.test(output);
+}
+
+function looksLikeSuccessfulGitRevert(output: string): boolean {
+  return /\bthis reverts commit\b/i.test(output) || /^\[[^\]]+\]\s+revert\b/im.test(output);
+}
+
+function classifyBashCommand(
+  command: string,
+  exitCode: number,
+  toolOutputText: string
+): NormalizedEvent["event_type"] {
   const normalized = command.toLowerCase();
   if (/\b(?:pnpm|npm|yarn|bun)\s+(test|vitest|jest|pytest)\b/.test(normalized)) {
     return "test_result";
@@ -132,8 +166,14 @@ function classifyBashCommand(command: string): NormalizedEvent["event_type"] {
   if (/\b(?:pnpm|npm|yarn|bun)\s+lint\b/.test(normalized)) {
     return "lint_result";
   }
-  if (/\bgit\s+commit\b/.test(normalized)) return "git_commit";
-  if (/\bgit\s+revert\b/.test(normalized)) return "git_revert";
+  if (/\bgit\s+commit\b/.test(normalized)) {
+    if (exitCode !== 0) return "command_result";
+    return looksLikeSuccessfulGitCommit(toolOutputText) ? "git_commit" : "command_result";
+  }
+  if (/\bgit\s+revert\b/.test(normalized)) {
+    if (exitCode !== 0) return "command_result";
+    return looksLikeSuccessfulGitRevert(toolOutputText) ? "git_revert" : "command_result";
+  }
   return "command_result";
 }
 
@@ -147,12 +187,18 @@ function normalizePostToolUse(
 
   if (toolName === "bash") {
     const command = asString(payload.tool_input?.command) ?? asString(payload.tool_input?.cmd) ?? "bash";
-    const eventType = classifyBashCommand(command);
     const content =
       asString(payload.tool_output?.stdout) ??
       asString(payload.tool_output?.summary) ??
       command;
-    const scope = buildScope(context, {
+    const exitCode =
+      typeof payload.exit_code === "number"
+        ? payload.exit_code
+        : payload.success === false
+          ? 1
+          : 0;
+    const eventType = classifyBashCommand(command, exitCode, content);
+    const scope = buildToolObservationScope(context, {
       branch: asString(payload.tool_input?.branch),
       cwd: asString(payload.tool_input?.cwd),
       files:
@@ -173,12 +219,7 @@ function normalizePostToolUse(
       scope,
       metadata: {
         command,
-        exit_code:
-          typeof payload.exit_code === "number"
-            ? payload.exit_code
-            : payload.success === false
-              ? 1
-              : 0,
+        exit_code: exitCode,
         failing_test: asString(payload.tool_output?.failing_test),
       },
     });
@@ -200,7 +241,7 @@ function normalizePostToolUse(
       }),
       id: `evt-${hashValue([context.project_id, context.session_id, payload.hook, payload.tool_name, ts, filePath])}`,
       capture_path: "system.tool_observation",
-      scope: buildScope(context, filePath ? { files: [filePath] } : undefined),
+      scope: buildToolObservationScope(context, filePath ? { files: [filePath] } : undefined),
       metadata: filePath ? { files: [filePath] } : undefined,
     });
   }
@@ -259,7 +300,7 @@ function normalizeMessageEvent(
       }),
       id: `evt-${hashValue([context.project_id, context.session_id, payload.kind, payload.ts ?? "", payload.content, payload.scope ?? null])}`,
       capture_path: capturePath,
-      scope: buildScope(context, payload.scope),
+      scope: buildMessageScope(context, payload.scope),
       metadata: payload.metadata,
     },
   ];
@@ -330,7 +371,7 @@ export class ClaudeCodeAdapter {
       session_id: this.context.session_id,
       workspace_id: this.context.workspace_id,
       agent_id: this.context.agent_id ?? "claude-code",
-      scope: buildScope(this.context),
+      scope: buildBaseScope(this.context),
     });
 
     const packetHash = hashValue({
