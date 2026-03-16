@@ -349,6 +349,14 @@ function formatInjection(packet: RecallPacket): string {
   return lines.join("\n");
 }
 
+function buildSessionMarkerKey(context: ClaudeAdapterContext): string {
+  return hashValue({
+    project_id: context.project_id,
+    workspace_id: context.workspace_id ?? null,
+    session_id: context.session_id ?? null,
+  });
+}
+
 function readSessionMarker(markerPath: string): string | undefined {
   try {
     const raw = fs.readFileSync(markerPath, "utf8");
@@ -420,7 +428,17 @@ export function createClaudeCodeRuntime(
     ...runtimeConfig
   } = config;
 
+  const requestedCapturePaths = runtimeConfig.allowed_capture_paths ?? [];
+  const requestedTrustedHookPaths = requestedCapturePaths.filter((capturePath) =>
+    CLAUDE_TRUSTED_HOOK_CAPTURE_PATHS.includes(capturePath)
+  );
+
   if (!enable_claude_hook_capture_paths) {
+    if (requestedTrustedHookPaths.length > 0) {
+      throw new Error(
+        "claude_code.hook.* capture paths require enable_claude_hook_capture_paths=true"
+      );
+    }
     return new Runtime(runtimeConfig);
   }
 
@@ -478,12 +496,12 @@ export class ClaudeCodeAdapter {
       active_claims: packet.active_claims.map((claim) => claim.id),
       open_threads: packet.open_threads.map((claim) => claim.id),
     });
-    const sessionKey = this.context.session_id ?? this.context.workspace_id ?? this.context.project_id;
+    const sessionKey = buildSessionMarkerKey(this.context);
     const markerPath = path.join(
       this.runtime.getPaths().dataDir,
       "claude-code",
       "session-brief-markers",
-      `${hashValue(sessionKey)}.json`
+      `${sessionKey}.json`
     );
     const previous =
       this.sessionPacketHashes.get(sessionKey) ?? readSessionMarker(markerPath);
@@ -517,11 +535,25 @@ export function defaultClaudeProjectId(cwdPath: string = process.cwd()): string 
     .split("\n")
     .map((value) => value.trim())
     .filter(Boolean);
-  const remoteName = remotes.includes("origin") ? "origin" : remotes[0];
+
+  const remoteName = remotes.includes("origin")
+    ? "origin"
+    : remotes.includes("upstream")
+      ? "upstream"
+      : remotes.length === 1
+        ? remotes[0]
+        : undefined;
+
   if (remoteName) {
     const remoteUrl = runGit(repoRoot, ["remote", "get-url", remoteName]);
     const normalizedRemote = remoteUrl ? normalizeGitRemote(remoteUrl) : undefined;
     if (normalizedRemote) return normalizedRemote;
+  }
+
+  if (remotes.length > 1) {
+    throw new Error(
+      "defaultClaudeProjectId requires explicit project_id when multiple non-priority remotes exist"
+    );
   }
 
   return defaultLocalProjectId(repoRoot);

@@ -264,6 +264,13 @@ test("claude adapter helper keeps trusted hook capture paths opt-in", async () =
   );
   runtime.close();
 
+  assert.throws(() =>
+    adapterModule.createClaudeCodeRuntime({
+      dataDir: tempDir,
+      allowed_capture_paths: ["claude_code.hook.user_confirmation"],
+    })
+  );
+
   const optInRuntime = adapterModule.createClaudeCodeRuntime({
     dataDir: optInTempDir,
     enable_claude_hook_capture_paths: true,
@@ -312,6 +319,35 @@ test("defaultClaudeProjectId uses canonical remote identity across local clones"
     adapterModule.defaultClaudeProjectId(repoB),
     "github.com/acme/demo"
   );
+});
+
+test("defaultClaudeProjectId prefers upstream over other non-origin remotes", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-project-upstream-"));
+  const repoPath = path.join(tempRoot, "repo");
+  fs.mkdirSync(repoPath, { recursive: true });
+  const adapterModule = await import("../dist/index.js");
+
+  runGit(repoPath, ["init"]);
+  runGit(repoPath, ["remote", "add", "backup", "https://github.com/acme/backup.git"]);
+  runGit(repoPath, ["remote", "add", "upstream", "git@github.com:acme/demo.git"]);
+
+  assert.equal(
+    adapterModule.defaultClaudeProjectId(repoPath),
+    "github.com/acme/demo"
+  );
+});
+
+test("defaultClaudeProjectId fails closed when multiple non-priority remotes exist", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-project-ambiguous-"));
+  const repoPath = path.join(tempRoot, "repo");
+  fs.mkdirSync(repoPath, { recursive: true });
+  const adapterModule = await import("../dist/index.js");
+
+  runGit(repoPath, ["init"]);
+  runGit(repoPath, ["remote", "add", "backup", "https://github.com/acme/backup.git"]);
+  runGit(repoPath, ["remote", "add", "mirror", "git@github.com:acme/demo.git"]);
+
+  assert.throws(() => adapterModule.defaultClaudeProjectId(repoPath));
 });
 
 test("defaultClaudeProjectId falls back to local repo identity without remote", async () => {
@@ -391,6 +427,74 @@ test("claude adapter downgrades failed git revert attempts to command_result", a
   assert.ok(!outcomes.some((outcome) => outcome.outcome_type === "commit_reverted"));
 
   runtime.close();
+});
+
+test("claude adapter does not dedupe across different projects sharing a session id", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-dedupe-project-"));
+  const adapterModule = await import("../dist/index.js");
+
+  const contextA = {
+    project_id: "github.com/acme/a",
+    workspace_id: "ws-a",
+    session_id: "shared-session",
+    repo_id: "github.com/acme/a",
+    branch: "main",
+    cwd: "/repo-a",
+  };
+  const runtimeA = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const adapterA = new adapterModule.ClaudeCodeAdapter({
+    runtime: runtimeA,
+    context: contextA,
+  });
+  adapterA.record({
+    hook: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: {
+      command: "pnpm test",
+      cwd: "/repo-a",
+      branch: "main",
+    },
+    tool_output: {
+      stdout: "Windows install path normalizer failed",
+      failing_test: "Windows install path normalizer",
+    },
+    exit_code: 1,
+  });
+  const first = adapterA.injectSessionBrief();
+  runtimeA.close();
+
+  const contextB = {
+    project_id: "github.com/acme/b",
+    workspace_id: "ws-b",
+    session_id: "shared-session",
+    repo_id: "github.com/acme/b",
+    branch: "main",
+    cwd: "/repo-b",
+  };
+  const runtimeB = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const adapterB = new adapterModule.ClaudeCodeAdapter({
+    runtime: runtimeB,
+    context: contextB,
+  });
+  adapterB.record({
+    hook: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: {
+      command: "pnpm test",
+      cwd: "/repo-b",
+      branch: "main",
+    },
+    tool_output: {
+      stdout: "Windows install path normalizer failed",
+      failing_test: "Windows install path normalizer",
+    },
+    exit_code: 1,
+  });
+  const second = adapterB.injectSessionBrief();
+
+  assert.equal(first.deduped, false);
+  assert.equal(second.deduped, false);
+  runtimeB.close();
 });
 
 test("claude adapter only promotes successful git revert with verifiable output", async () => {
