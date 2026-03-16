@@ -1,8 +1,17 @@
 import { mkdtempSync } from "node:fs";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+
+function runGit(cwd, args) {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+}
 
 test("claude adapter records hook and message events through runtime-first capture paths", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-adapter-"));
@@ -174,17 +183,19 @@ test("claude adapter injects session brief once per unchanged packet", async () 
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-brief-"));
   const adapterModule = await import("../dist/index.js");
 
+  const context = {
+    project_id: "github.com/acme/demo",
+    workspace_id: "ws-1",
+    session_id: "session-2",
+    repo_id: "github.com/acme/demo",
+    branch: "main",
+    cwd: "/repo",
+  };
+
   const runtime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
   const adapter = new adapterModule.ClaudeCodeAdapter({
     runtime,
-    context: {
-      project_id: "github.com/acme/demo",
-      workspace_id: "ws-1",
-      session_id: "session-2",
-      repo_id: "github.com/acme/demo",
-      branch: "main",
-      cwd: "/repo",
-    },
+    context,
   });
 
   adapter.record({
@@ -203,7 +214,16 @@ test("claude adapter injects session brief once per unchanged packet", async () 
   });
 
   const first = adapter.injectSessionBrief();
-  const second = adapter.injectSessionBrief();
+  runtime.close();
+
+  const secondRuntime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const secondAdapter = new adapterModule.ClaudeCodeAdapter({
+    runtime: secondRuntime,
+    context: {
+      ...context,
+    },
+  });
+  const second = secondAdapter.injectSessionBrief();
 
   assert.equal(first.deduped, false);
   assert.ok(first.text?.includes("Project Memory"));
@@ -216,7 +236,7 @@ test("claude adapter injects session brief once per unchanged packet", async () 
   assert.equal(second.deduped, true);
   assert.equal(second.text, null);
 
-  runtime.close();
+  secondRuntime.close();
 });
 
 test("claude adapter helper keeps trusted hook capture paths opt-in", async () => {
@@ -269,6 +289,41 @@ test("claude adapter helper keeps trusted hook capture paths opt-in", async () =
       .some((claim) => claim.canonical_key === "decision.persistence.backend")
   );
   optInRuntime.close();
+});
+
+test("defaultClaudeProjectId uses canonical remote identity across local clones", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-project-id-"));
+  const repoA = path.join(tempRoot, "repo-a");
+  const repoB = path.join(tempRoot, "repo-b");
+  fs.mkdirSync(repoA, { recursive: true });
+  fs.mkdirSync(repoB, { recursive: true });
+  const adapterModule = await import("../dist/index.js");
+
+  runGit(repoA, ["init"]);
+  runGit(repoA, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+  runGit(repoB, ["init"]);
+  runGit(repoB, ["remote", "add", "origin", "git@github.com:acme/demo.git"]);
+
+  assert.equal(
+    adapterModule.defaultClaudeProjectId(repoA),
+    "github.com/acme/demo"
+  );
+  assert.equal(
+    adapterModule.defaultClaudeProjectId(repoB),
+    "github.com/acme/demo"
+  );
+});
+
+test("defaultClaudeProjectId falls back to local repo identity without remote", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-project-local-"));
+  const repoPath = path.join(tempRoot, "repo");
+  fs.mkdirSync(repoPath, { recursive: true });
+  const adapterModule = await import("../dist/index.js");
+
+  runGit(repoPath, ["init"]);
+
+  const projectId = adapterModule.defaultClaudeProjectId(repoPath);
+  assert.ok(projectId.startsWith("local:"));
 });
 
 test("claude adapter does not emit unsupported destructive lifecycle events from hook normalization", async () => {

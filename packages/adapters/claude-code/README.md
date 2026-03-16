@@ -41,3 +41,5 @@ Notes:
 
 - `createClaudeCodeRuntime()` does not enable `claude_code.hook.*` by default
 - future real hook-envelope integrations must opt in explicitly with `enable_claude_hook_capture_paths: true`
+- `defaultClaudeProjectId(cwd)` uses canonical git remote identity when available and falls back to `local:<sha256(git_root)>` only for local-only repos
+- session brief dedupe is persisted under the runtime data dir, so repeated injection can be suppressed across adapter instances for the same session

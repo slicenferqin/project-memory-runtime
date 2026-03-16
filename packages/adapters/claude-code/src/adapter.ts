@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 import {
   type ClaimScope,
   type EventCapturePath,
@@ -86,6 +88,10 @@ function nowIso(): string {
 
 function hashValue(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function asString(value: unknown): string | undefined {
@@ -343,6 +349,69 @@ function formatInjection(packet: RecallPacket): string {
   return lines.join("\n");
 }
 
+function readSessionMarker(markerPath: string): string | undefined {
+  try {
+    const raw = fs.readFileSync(markerPath, "utf8");
+    const parsed = JSON.parse(raw) as { packet_hash?: string };
+    return typeof parsed.packet_hash === "string" ? parsed.packet_hash : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSessionMarker(markerPath: string, packetHash: string): void {
+  fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+  fs.writeFileSync(
+    markerPath,
+    JSON.stringify(
+      {
+        packet_hash: packetHash,
+        updated_at: new Date().toISOString(),
+      },
+      null,
+      2
+    )
+  );
+}
+
+function runGit(cwdPath: string, args: string[]): string | undefined {
+  try {
+    return execFileSync("git", ["-C", cwdPath, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeGitRemote(remoteUrl: string): string | undefined {
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) return undefined;
+
+  const scpLike = trimmed.match(/^(?:ssh:\/\/)?git@([^:/]+)[:/]([^#?]+)$/i);
+  if (scpLike) {
+    const host = scpLike[1].toLowerCase();
+    const repoPath = scpLike[2].replace(/\.git$/i, "").replace(/^\/+/, "");
+    return `${host}/${repoPath}`;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+    const repoPath = parsed.pathname.replace(/\.git$/i, "").replace(/^\/+/, "");
+    if (!repoPath) return undefined;
+    return `${host}/${repoPath}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function defaultLocalProjectId(cwdPath: string): string {
+  const realPath = fs.realpathSync.native?.(cwdPath) ?? fs.realpathSync(cwdPath);
+  return `local:${sha256(realPath)}`;
+}
+
 export function createClaudeCodeRuntime(
   config: ClaudeCodeRuntimeConfig = {}
 ): ProjectMemoryRuntime {
@@ -410,9 +479,17 @@ export class ClaudeCodeAdapter {
       open_threads: packet.open_threads.map((claim) => claim.id),
     });
     const sessionKey = this.context.session_id ?? this.context.workspace_id ?? this.context.project_id;
-    const previous = this.sessionPacketHashes.get(sessionKey);
+    const markerPath = path.join(
+      this.runtime.getPaths().dataDir,
+      "claude-code",
+      "session-brief-markers",
+      `${hashValue(sessionKey)}.json`
+    );
+    const previous =
+      this.sessionPacketHashes.get(sessionKey) ?? readSessionMarker(markerPath);
 
     if (previous === packetHash) {
+      this.sessionPacketHashes.set(sessionKey, packetHash);
       return {
         packet,
         text: null,
@@ -422,6 +499,7 @@ export class ClaudeCodeAdapter {
     }
 
     this.sessionPacketHashes.set(sessionKey, packetHash);
+    writeSessionMarker(markerPath, packetHash);
     return {
       packet,
       text: formatInjection(packet),
@@ -432,5 +510,19 @@ export class ClaudeCodeAdapter {
 }
 
 export function defaultClaudeProjectId(cwdPath: string = process.cwd()): string {
-  return path.resolve(cwdPath);
+  const gitRoot = runGit(cwdPath, ["rev-parse", "--show-toplevel"]);
+  const repoRoot = gitRoot ? path.resolve(gitRoot) : path.resolve(cwdPath);
+
+  const remotes = (runGit(repoRoot, ["remote"]) ?? "")
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const remoteName = remotes.includes("origin") ? "origin" : remotes[0];
+  if (remoteName) {
+    const remoteUrl = runGit(repoRoot, ["remote", "get-url", remoteName]);
+    const normalizedRemote = remoteUrl ? normalizeGitRemote(remoteUrl) : undefined;
+    if (normalizedRemote) return normalizedRemote;
+  }
+
+  return defaultLocalProjectId(repoRoot);
 }
