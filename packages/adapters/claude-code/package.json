@@ -10,6 +10,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "project-memory-claude-hook": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -22,6 +25,7 @@
   ],
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.json",
+    "cli": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm run build && node ./dist/cli.js",
     "clean": "rm -rf dist",
     "test": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm run build && node --test tests/*.test.mjs",
     "typecheck": "pnpm exec tsc -p tsconfig.json --noEmit"

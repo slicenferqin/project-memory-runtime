@@ -5,6 +5,7 @@ Reference adapter spike for Claude Code.
 Current scope is intentionally narrow:
 
 - runtime-first local library
+- stdin/CLI entrypoint for hook execution
 - controlled `capture_path` mapping
 - `SessionStart` recall injection
 - `PostToolUse` capture normalization
@@ -28,6 +29,7 @@ Primary integration points:
 
 - `SessionStart`
 - `PostToolUse`
+- `PostToolUseFailure`
 - `Stop`
 - `SessionEnd`
 
@@ -36,6 +38,7 @@ Exports:
 - `createClaudeCodeRuntime(config)`
 - `ClaudeCodeAdapter`
 - `defaultClaudeProjectId(cwd)`
+- `project-memory-claude-hook` CLI
 
 Notes:
 
@@ -45,3 +48,18 @@ Notes:
 - `defaultClaudeProjectId(cwd)` follows `origin > upstream > unique other remote`, and falls back to `local:<sha256(git_root)>` only for local-only repos
 - if multiple non-priority remotes exist and no `origin` / `upstream` is present, `defaultClaudeProjectId(cwd)` fails closed and the caller must provide `project_id`
 - session brief dedupe is persisted under the runtime data dir and keyed by `{project_id, workspace_id, session_id}`, so it can suppress repeats across adapter instances without crossing project boundaries
+
+CLI usage:
+
+```bash
+cat hook-envelope.json | project-memory-claude-hook --data-dir .memory
+```
+
+Current CLI support:
+
+- `SessionStart`
+- `PostToolUse`
+- `PostToolUseFailure`
+- `Stop`
+- `SessionEnd`
+- `PreCompact`

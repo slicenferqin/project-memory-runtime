@@ -33,19 +33,21 @@ export interface ClaudeAdapterContext {
 }
 
 export interface ClaudePostToolUsePayload {
-  hook: "PostToolUse";
+  hook: "PostToolUse" | "PostToolUseFailure";
   tool_name: string;
   tool_input?: Record<string, unknown>;
   tool_output?: Record<string, unknown>;
   success?: boolean;
   exit_code?: number;
   ts?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ClaudeSessionLifecyclePayload {
   hook: "SessionStart" | "Stop" | "SessionEnd" | "PreCompact";
   ts?: string;
   note?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ClaudeMessagePayload {
@@ -248,6 +250,7 @@ function normalizePostToolUse(
         command,
         exit_code: exitCode,
         failing_test: asString(payload.tool_output?.failing_test),
+        ...(payload.metadata ?? {}),
       },
     });
     return events;
@@ -304,6 +307,7 @@ function normalizeLifecycleEvent(
       id: `evt-${hashValue([context.project_id, context.session_id, payload.hook, ts])}`,
       metadata: {
         hook_name: payload.hook,
+        ...(payload.metadata ?? {}),
       },
     },
   ];
@@ -465,10 +469,10 @@ export class ClaudeCodeAdapter {
 
   capture(input: ClaudeAdapterInput): NormalizedEvent[] {
     if ("hook" in input) {
-      if (input.hook === "PostToolUse") {
+      if (input.hook === "PostToolUse" || input.hook === "PostToolUseFailure") {
         return normalizePostToolUse(this.context, input);
       }
-      return normalizeLifecycleEvent(this.context, input);
+      return normalizeLifecycleEvent(this.context, input as ClaudeSessionLifecyclePayload);
     }
 
     return normalizeMessageEvent(this.context, input);
@@ -557,4 +561,19 @@ export function defaultClaudeProjectId(cwdPath: string = process.cwd()): string 
   }
 
   return defaultLocalProjectId(repoRoot);
+}
+
+export function defaultClaudeWorkspaceId(cwdPath: string = process.cwd()): string {
+  const gitRoot = runGit(cwdPath, ["rev-parse", "--show-toplevel"]);
+  const workspaceRoot = gitRoot ? path.resolve(gitRoot) : path.resolve(cwdPath);
+  const realPath = fs.realpathSync.native?.(workspaceRoot) ?? fs.realpathSync(workspaceRoot);
+  return sha256(realPath);
+}
+
+export function defaultClaudeBranch(cwdPath: string = process.cwd()): string | undefined {
+  const gitRoot = runGit(cwdPath, ["rev-parse", "--show-toplevel"]);
+  const repoRoot = gitRoot ? path.resolve(gitRoot) : path.resolve(cwdPath);
+  const branch = runGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (!branch || branch === "HEAD") return undefined;
+  return branch;
 }
