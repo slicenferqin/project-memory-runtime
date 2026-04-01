@@ -37,6 +37,7 @@ export const POSITIVE_OUTCOME_TYPES: ReadonlySet<OutcomeType> = new Set<OutcomeT
   "commit_kept",
   "issue_closed",
   "human_kept",
+  "human_approved",
 ]);
 
 /** Canonical set of negative outcome types. Single source of truth. */
@@ -47,4 +48,6 @@ export const NEGATIVE_OUTCOME_TYPES: ReadonlySet<OutcomeType> = new Set<OutcomeT
   "issue_reopened",
   "human_corrected",
   "manual_override",
+  "human_rejected",
+  "claim_superseded",
 ]);

@@ -156,7 +156,10 @@ export type OutcomeType =
   | "issue_reopened"
   | "human_kept"
   | "human_corrected"
-  | "manual_override";
+  | "manual_override"
+  | "human_approved"
+  | "human_rejected"
+  | "claim_superseded";
 
 export interface Outcome {
   id: string;

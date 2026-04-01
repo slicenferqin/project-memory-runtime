@@ -1,5 +1,5 @@
 import { RuntimeStorage } from "./storage/sqlite.js";
-import { nowIso, clamp, asString, daysBetween, POSITIVE_OUTCOME_TYPES, NEGATIVE_OUTCOME_TYPES } from "./utils.js";
+import { nowIso, clamp, asString, daysBetween, hashId, POSITIVE_OUTCOME_TYPES, NEGATIVE_OUTCOME_TYPES } from "./utils.js";
 import type {
   ActivationLog,
   Claim,
@@ -324,6 +324,30 @@ export class ProjectMemoryRuntime {
     }
 
     return changed;
+  }
+
+  recordOutcome(input: {
+    project_id: string;
+    related_event_ids: string[];
+    related_claim_ids?: string[];
+    outcome_type: OutcomeType;
+    strength: number;
+    notes?: string;
+  }): void {
+    this.initialize();
+    const outcome: Outcome = {
+      id: hashId("out", input.project_id, nowIso(), input.outcome_type, ...input.related_event_ids),
+      ts: nowIso(),
+      project_id: input.project_id,
+      related_event_ids: input.related_event_ids,
+      related_claim_ids: input.related_claim_ids,
+      outcome_type: input.outcome_type,
+      strength: input.strength,
+      notes: input.notes,
+    };
+    this.storage.transact(() => {
+      this.applyOutcome(outcome);
+    });
   }
 
   verifyClaim(input: VerifyClaimInput): Claim | undefined {

@@ -509,7 +509,110 @@ export class ClaudeCodeAdapter {
     for (const event of events) {
       this.runtime.recordEvent(event);
     }
+
+    // Auto-trigger outcomes based on event patterns
+    this.detectAndRecordOutcomes(events, input);
+
     return events;
+  }
+
+  private detectAndRecordOutcomes(events: NormalizedEvent[], input: ClaudeAdapterInput): void {
+    // Detect test fail→pass pattern (human_approved)
+    if ("hook" in input && (input.hook === "PostToolUse" || input.hook === "PostToolUseFailure")) {
+      const testEvent = events.find(e => e.event_type === "test_result");
+      if (testEvent && testEvent.metadata?.exit_code === 0) {
+        // Check if there was a recent test failure for the same test
+        const recentEvents = this.runtime.listEvents(this.context.project_id);
+        const recentFailure = recentEvents
+          .filter(e => e.event_type === "test_result" && e.metadata?.exit_code !== 0)
+          .find(e => {
+            const failTime = new Date(e.ts).getTime();
+            const passTime = new Date(testEvent.ts).getTime();
+            return passTime - failTime < 3600000 && passTime > failTime; // within 1 hour
+          });
+
+        if (recentFailure) {
+          // Find claims related to the test failure
+          const claims = this.runtime.listClaims(this.context.project_id);
+          const relatedClaims = claims.filter(c =>
+            c.source_event_ids.includes(recentFailure.id) && c.type === "thread"
+          );
+
+          if (relatedClaims.length > 0) {
+            this.runtime.recordOutcome({
+              project_id: this.context.project_id,
+              related_event_ids: [recentFailure.id, testEvent.id],
+              related_claim_ids: relatedClaims.map(c => c.id),
+              outcome_type: "human_approved",
+              strength: 0.8,
+              notes: "Test fixed: failure resolved",
+            });
+          }
+        }
+      }
+    }
+
+    // Detect negative feedback in user messages (human_rejected)
+    if ("kind" in input && input.kind === "user_message") {
+      const content = input.content.toLowerCase();
+      const negativePatterns = [
+        /不对|错了|不行|不好|有问题/,
+        /wrong|incorrect|bad|issue|problem|doesn't work/,
+        /换个|重新|再试/,
+        /revert|undo|rollback/
+      ];
+
+      if (negativePatterns.some(p => p.test(content))) {
+        // Find recent claims from this session
+        const claims = this.runtime.listClaims(this.context.project_id);
+        const recentClaims = claims.filter(c => {
+          if (!c.last_activated_at) return false;
+          const claimTime = new Date(c.last_activated_at).getTime();
+          const now = Date.now();
+          return now - claimTime < 600000; // within 10 minutes
+        });
+
+        if (recentClaims.length > 0) {
+          const userEvent = events[0];
+          if (userEvent) {
+            this.runtime.recordOutcome({
+              project_id: this.context.project_id,
+              related_event_ids: [userEvent.id],
+              related_claim_ids: recentClaims.slice(0, 3).map(c => c.id),
+              outcome_type: "human_rejected",
+              strength: 0.6,
+              notes: "User expressed dissatisfaction",
+            });
+          }
+        }
+      }
+    }
+
+    // Detect claim supersession (claim_superseded)
+    const claims = this.runtime.listClaims(this.context.project_id);
+    for (const event of events) {
+      const newClaim = claims.find(c => c.source_event_ids.includes(event.id));
+
+      if (newClaim?.canonical_key && newClaim.type === "decision") {
+        const supersededClaim = claims.find(c =>
+          c.id !== newClaim.id &&
+          c.canonical_key === newClaim.canonical_key &&
+          c.type === "decision" &&
+          new Date(c.created_at).getTime() < new Date(newClaim.created_at).getTime()
+        );
+
+        if (supersededClaim) {
+          this.runtime.recordOutcome({
+            project_id: this.context.project_id,
+            related_event_ids: [event.id],
+            related_claim_ids: [supersededClaim.id],
+            outcome_type: "claim_superseded",
+            strength: 0.9,
+            notes: `Superseded by newer decision: ${newClaim.id}`,
+          });
+        }
+      }
+    }
   }
 
   injectSessionBrief(): ClaudeInjectionResult {
