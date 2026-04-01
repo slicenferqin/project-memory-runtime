@@ -11,6 +11,8 @@ import {
   type ProjectMemoryRuntime,
   type RecallPacket,
   type RuntimeConfig,
+  nowIso,
+  asString,
 } from "@slicenferqin/project-memory-runtime-core";
 import { ProjectMemoryRuntime as Runtime } from "@slicenferqin/project-memory-runtime-core";
 
@@ -84,20 +86,12 @@ const CLAUDE_TRUSTED_HOOK_CAPTURE_PATHS: EventCapturePath[] = [
   "claude_code.hook.user_message",
 ];
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
 function hashValue(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
 }
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function buildBaseScope(context: ClaudeAdapterContext): EventScope | undefined {
@@ -186,13 +180,16 @@ function classifyBashCommand(
   toolOutputText: string
 ): NormalizedEvent["event_type"] {
   const normalized = command.toLowerCase();
-  if (/\b(?:pnpm|npm|yarn|bun)\s+(test|vitest|jest|pytest)\b/.test(normalized)) {
+  if (/\b(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?(test|vitest|jest|pytest)\b/.test(normalized)) {
     return "test_result";
   }
-  if (/\b(?:pnpm|npm|yarn|bun)\s+build\b/.test(normalized)) {
+  if (/\bnode\s+--test\b/.test(normalized)) {
+    return "test_result";
+  }
+  if (/\b(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?build\b/.test(normalized)) {
     return "build_result";
   }
-  if (/\b(?:pnpm|npm|yarn|bun)\s+lint\b/.test(normalized)) {
+  if (/\b(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?lint\b/.test(normalized)) {
     return "lint_result";
   }
   if (/\bgit\s+commit\b/.test(normalized)) {
@@ -332,6 +329,26 @@ function normalizeMessageEvent(
   ];
 }
 
+function formatOutcomeBadge(claim: RecallPacket["active_claims"][number]): string {
+  const summary = claim.outcome_summary;
+  if (!summary) return "";
+  if (summary.positive_count === 0 && summary.negative_count === 0) return "";
+
+  const parts: string[] = [];
+  if (summary.positive_count > 0) {
+    const types = summary.outcome_types
+      .filter((t) => ["test_pass", "build_pass", "commit_kept", "issue_closed", "human_kept"].includes(t))
+      .map((t) => t.replace(/_/g, " "));
+    parts.push(`${summary.positive_count} ${types.join(", ") || "pass"}`);
+  }
+  if (summary.negative_count > 0) {
+    parts.push(`${summary.negative_count} negative`);
+  }
+
+  const icon = summary.negative_count === 0 ? "✓" : "⚠";
+  return ` [${icon} verified: ${parts.join(" | ")} | confidence: ${claim.confidence.toFixed(2)}]`;
+}
+
 function formatInjection(packet: RecallPacket): string {
   const lines: string[] = [];
   lines.push("Project Memory");
@@ -340,14 +357,22 @@ function formatInjection(packet: RecallPacket): string {
     lines.push("");
     lines.push("Active claims:");
     for (const claim of packet.active_claims.slice(0, 5)) {
-      lines.push(`- ${claim.canonical_key}: ${claim.content}`);
+      const badge = formatOutcomeBadge(claim);
+      lines.push(`- ${claim.canonical_key}: ${claim.content}${badge}`);
     }
   }
   if (packet.open_threads.length > 0) {
     lines.push("");
     lines.push("Open threads:");
     for (const thread of packet.open_threads.slice(0, 5)) {
-      lines.push(`- ${thread.canonical_key}: ${thread.content}`);
+      const badge = formatOutcomeBadge(thread);
+      lines.push(`- ${thread.canonical_key}: ${thread.content}${badge}`);
+    }
+  }
+  if (packet.warnings?.length) {
+    lines.push("");
+    for (const w of packet.warnings) {
+      lines.push(`⚠ ${w}`);
     }
   }
   return lines.join("\n");
