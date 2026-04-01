@@ -1,17 +1,17 @@
 {
-  "name": "@slicenferqin/project-memory-adapter-claude-code",
+  "name": "project-memory-runtime",
   "version": "0.1.0",
-  "description": "Claude Code adapter for Project Memory Runtime — hooks, event normalization, and session brief injection",
+  "description": "CLI for Project Memory Runtime — evidence-backed lifecycle memory for AI coding agents",
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/nicepkg/project-memory-runtime.git",
-    "directory": "packages/adapters/claude-code"
+    "directory": "packages/cli"
   },
   "homepage": "https://github.com/nicepkg/project-memory-runtime",
   "keywords": [
-    "ai", "claude", "claude-code", "hooks", "adapter",
-    "memory", "agent"
+    "ai", "memory", "context", "claude", "agent",
+    "decisions", "evidence", "outcomes", "lifecycle"
   ],
   "engines": {
     "node": ">=20"
@@ -20,7 +20,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "project-memory-claude-hook": "./dist/cli.js"
+    "project-memory-runtime": "./dist/cli.js",
+    "pmr": "./dist/cli.js"
   },
   "exports": {
     ".": {
@@ -30,17 +31,18 @@
   },
   "files": [
     "dist",
+    "assets",
     "README.md"
   ],
   "scripts": {
-    "build": "pnpm exec tsc -p tsconfig.json",
-    "cli": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm run build && node ./dist/cli.js",
+    "build": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm --filter @slicenferqin/project-memory-adapter-claude-code build && pnpm exec tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "test": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm run build && node --test tests/*.test.mjs",
+    "test": "pnpm run build && node --test tests/*.test.mjs",
     "typecheck": "pnpm exec tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@slicenferqin/project-memory-runtime-core": "workspace:*"
+    "@slicenferqin/project-memory-runtime-core": "workspace:*",
+    "@slicenferqin/project-memory-adapter-claude-code": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

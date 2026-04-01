@@ -7,12 +7,40 @@
 简体中文 | [English](./README_EN.md)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
-[![Status: Phase%201%20Baseline](https://img.shields.io/badge/Status-Phase%201%20Baseline-orange)](./docs/planning/phase-1-implementation-plan.md)
+[![CI](https://img.shields.io/github/actions/workflow/status/nicepkg/project-memory-runtime/ci.yml?label=CI)](https://github.com/nicepkg/project-memory-runtime/actions)
 [![Architecture: Runtime First](https://img.shields.io/badge/Architecture-Runtime%20First-black)](./docs/planning/2026-03-12-project-memory-kernel-design-v2.md)
 
-[为什么是它](#为什么是它) • [核心原则](#核心原则) • [仓库结构](#仓库结构) • [当前阶段](#当前阶段) • [从哪里开始读](#从哪里开始读)
+[快速上手](#快速上手) • [为什么是它](#为什么是它) • [核心原则](#核心原则) • [CLI 命令](#cli-命令) • [仓库结构](#仓库结构)
 
 </div>
+
+---
+
+## 快速上手
+
+```bash
+# 1. 在任意 git 项目中一键安装（30 秒）
+npx project-memory-runtime init
+
+# 2. 启动 Claude Code 会话 → 记忆自动注入
+#    正常工作 — 测试/提交/编辑全部自动捕获
+
+# 3. 新会话看到可信记忆：
+#    decision.persistence.backend: Use SQLite [✓ 3 test passes]
+
+# 4. 随时检索
+pmr search "为什么用 SQLite"
+pmr explain <claim-id>
+pmr snapshot
+pmr status
+```
+
+`init` 命令会自动完成：
+- 推导 project_id（基于 git remote）
+- 创建 `.memory/` 数据目录 + SQLite 数据库
+- 安装 6 个生命周期 hooks 到 `.claude/settings.local.json`
+- 安装 Skill 文件引导 Claude 使用 `pmr` 检索命令
+- 添加 `.memory/` 到 `.gitignore`
 
 ---
 
@@ -69,23 +97,55 @@ MCP 只是未来的兼容桥接层，CLI 只是运维与调试接口。
 
 V2 已经把系统收敛为四层：
 
-1. **Evidence Ledger**  
+1. **Evidence Ledger**
    只追加的项目事件账本
 
-2. **Claim Store**  
+2. **Claim Store**
    带验证状态、作用域、生命周期的结构化记忆
 
-3. **Activation Engine**  
+3. **Activation Engine**
    负责 eligibility、ranking、budget packing，而不是单纯 top-k 搜索
 
-4. **Outcome Loop**  
+4. **Outcome Loop**
    让测试、提交、issue、人工修正等结果反哺记忆质量
 
-对外的主产品接口不是数据库，也不是搜索 API，而是：
+---
 
-- `RecallPacket`
-- lifecycle adapters
-- `memoryctl`
+## CLI 命令
+
+```bash
+pmr init                              # 一键安装（hooks + skill + DB）
+pmr search "query"                    # 搜索项目记忆
+pmr search --type decision            # 按类型过滤
+pmr search --status active --limit 10 # 按状态过滤
+pmr explain <claim-id>                # 溯源：证据 → claim → outcome 时间线
+pmr snapshot                          # 项目全景
+pmr status                            # 记忆库概览
+```
+
+### Outcome 可视化
+
+Session Brief 注入效果：
+```
+Active Decisions:
+  decision.persistence.backend: Use SQLite [✓ verified: 3 test passes, 1 build pass | confidence: 0.90]
+
+Open Threads:
+  thread.issue.42: Refactor auth module [⚠ no outcome yet | open 5 days]
+```
+
+`pmr explain` 输出 outcome 时间线：
+```
+Claim: decision.persistence.backend — "Use SQLite as backend"
+Status: active | Confidence: 90% | Score: +0.82
+
+Timeline:
+  2026-03-12  Claim created (user_confirmed)
+  2026-03-12  test_pass → score: +0.00 → +0.10
+  2026-03-13  build_pass → score: +0.10 → +0.19
+  2026-03-14  test_pass ×3 → score: +0.19 → +0.44
+  2026-03-15  commit_kept → score: +0.44 → +0.82
+```
 
 ---
 
@@ -93,55 +153,41 @@ V2 已经把系统收敛为四层：
 
 ```text
 project-memory-runtime/
-├── docs/
-│   ├── planning/
-│   │   ├── 2026-03-12-project-memory-kernel-design-v2.md
-│   │   ├── contract-index.md
-│   │   ├── identity-and-scope-v1.md
-│   │   ├── state-machine-v1.md
-│   │   ├── schema-v1.md
-│   │   ├── adapter-contract-v1.md
-│   │   ├── evaluation-protocol-v1.md
-│   │   └── compiler-and-ingestion-v1.md
-│   └── reviews/
 ├── packages/
-│   ├── runtime/
-│   ├── adapters/
-│   │   ├── claude-code/
-│   │   └── opencode/
-│   └── bridges/
-│       └── mcp/
-└── tools/
-    └── memoryctl/
+│   ├── runtime/              # @slicenferqin/project-memory-runtime-core
+│   ├── cli/                  # project-memory-runtime (CLI: pmr)
+│   └── adapters/
+│       └── claude-code/      # @slicenferqin/project-memory-adapter-claude-code
+├── tools/
+│   ├── memoryctl/            # 开发者管理工具
+│   └── benchmarks/           # 性能基准测试
+├── docs/
+│   ├── planning/             # 设计文档
+│   └── reviews/
+└── .github/workflows/        # CI + 发布流水线
 ```
 
 ---
 
 ## 当前阶段
 
-当前仓库已经完成 **Phase 1 runtime baseline**，包括：
+**Phase 2 完成**，包括：
 
-- SQLite-backed ledger / claim / outcome / activation log 基础存储
-- deterministic compiler baseline
-- lifecycle + outcome loop baseline
-- activation + recall baseline
-- runtime-only benchmark harness
+- 一键安装 `npx project-memory-runtime init`
+- 5 个 CLI 检索命令（search / explain / snapshot / status / init）
+- Outcome 可视化（session brief 显示 "✓ verified by N test passes"）
+- Stale 检测告警
+- Outcome 时间线（`pmr explain` 展示证据链 + score 变化）
+- Skill 文件引导 Claude 使用 `pmr` 命令
+- 86 个自动化测试（runtime 60 + adapter 17 + memoryctl 3 + CLI 6）
+- SQLite 并发安全（busy_timeout + retry）
+- 性能索引（claims, outcomes, transitions, events）
 
-当前工作的重点不再是继续扩写 contract，而是：
+本地验证：
 
-- 继续 harden runtime invariants
-- 扩充更高价值 claim families
-- 让 benchmark 结果稳定可复现
-- 在 runtime 足够稳之后推进受控的 Claude Code reference adapter spike
-
-目前最常用的本地验证入口：
-
-- Node `20.x`
+- Node `>=20`
 - `pnpm run test`
 - `pnpm run benchmark:runtime`
-- `pnpm run rebuild:native`
-- `tools/benchmarks/tmp/benchmarks/*` 仅作本地临时结果；正式门禁以 Node 20 CI artifact 为准
-- 当前一份仓库内快照见 [2026-03-15-runtime-only-node20.md](./docs/benchmarks/2026-03-15-runtime-only-node20.md)
 
 ---
 

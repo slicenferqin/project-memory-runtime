@@ -1,9 +1,12 @@
-import type { ActivationLog, Claim, ClaimScope, RecallPacket } from "../types.js";
+import type { ActivationLog, Claim, ClaimScope, Outcome, OutcomeSummary, RecallClaim, RecallPacket } from "../types.js";
 import { activateClaims } from "../activation/engine.js";
+import { nowIso, daysBetween, POSITIVE_OUTCOME_TYPES, NEGATIVE_OUTCOME_TYPES } from "../utils.js";
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
+const STALE_WARNING_TTL_DAYS: Record<Claim["type"], number> = {
+  fact: 90,
+  decision: 60,
+  thread: 14,
+};
 
 function truncate(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
@@ -57,10 +60,84 @@ export interface BuildRecallPacketInput {
   projectId: string;
   agentId: string;
   claims: Claim[];
+  outcomes?: Outcome[];
   scope?: ClaimScope;
   debug?: boolean;
   query?: string;
   mode: "session_brief" | "project_snapshot" | "search";
+}
+
+function buildOutcomeSummaryMap(outcomes: Outcome[]): Map<string, OutcomeSummary> {
+  const map = new Map<string, OutcomeSummary>();
+
+  for (const outcome of outcomes) {
+    for (const claimId of outcome.related_claim_ids ?? []) {
+      let summary = map.get(claimId);
+      if (!summary) {
+        summary = { positive_count: 0, negative_count: 0, outcome_types: [] };
+        map.set(claimId, summary);
+      }
+
+      if (POSITIVE_OUTCOME_TYPES.has(outcome.outcome_type)) {
+        summary.positive_count += 1;
+      } else if (NEGATIVE_OUTCOME_TYPES.has(outcome.outcome_type)) {
+        summary.negative_count += 1;
+      }
+
+      if (!summary.outcome_types.includes(outcome.outcome_type)) {
+        summary.outcome_types.push(outcome.outcome_type);
+      }
+
+      if (!summary.last_outcome_at || outcome.ts > summary.last_outcome_at) {
+        summary.last_outcome_at = outcome.ts;
+      }
+    }
+  }
+
+  return map;
+}
+
+function enrichClaimsWithOutcomeSummary(
+  claims: RecallClaim[],
+  summaryMap: Map<string, OutcomeSummary>
+): RecallClaim[] {
+  return claims.map((claim) => {
+    const summary = summaryMap.get(claim.id);
+    return summary ? { ...claim, outcome_summary: summary } : claim;
+  });
+}
+
+function buildStaleWarnings(
+  activeClaims: RecallClaim[],
+  openThreads: RecallClaim[],
+  now: string
+): string[] {
+  const warnings: string[] = [];
+  const allClaims = [...activeClaims, ...openThreads];
+
+  for (const claim of allClaims) {
+    const ttlDays = STALE_WARNING_TTL_DAYS[claim.type];
+    const anchor = claim.last_verified_at ?? claim.created_at;
+    const daysSinceVerification = daysBetween(anchor, now);
+
+    // Warn if approaching stale threshold (within 80% of TTL)
+    if (claim.status === "active" && daysSinceVerification >= ttlDays * 0.8) {
+      warnings.push(
+        `${claim.canonical_key}: approaching stale (no verification in ${Math.round(daysSinceVerification)} days, threshold: ${ttlDays})`
+      );
+    }
+
+    // Warn if claim was recently demoted by negative outcome
+    if (claim.status === "stale" && claim.outcome_summary) {
+      if (claim.outcome_summary.negative_count > 0) {
+        warnings.push(
+          `${claim.canonical_key}: demoted by failing ${claim.outcome_summary.outcome_types.filter((t) => NEGATIVE_OUTCOME_TYPES.has(t)).join("/")}`
+        );
+      }
+    }
+  }
+
+  return warnings;
 }
 
 export function buildRecallPacket(
@@ -104,25 +181,35 @@ export function buildRecallPacket(
   insertActivationLogs(activeClaimsResult.filtered, writeActivationLog);
   insertActivationLogs(activeClaimsResult.dropped, writeActivationLog);
 
+  // Enrich claims with outcome summaries
+  const outcomeSummaryMap = buildOutcomeSummaryMap(input.outcomes ?? []);
+  const enrichedActiveClaims = enrichClaimsWithOutcomeSummary(activeClaimsResult.selected, outcomeSummaryMap);
+  const enrichedOpenThreads = enrichClaimsWithOutcomeSummary(openThreadsResult.selected, outcomeSummaryMap);
+
   const recentEvidenceRefs = Array.from(
     new Set(
-      [...openThreadsResult.selected, ...activeClaimsResult.selected]
+      [...enrichedActiveClaims, ...enrichedOpenThreads]
         .flatMap((claim) => claim.evidence_refs)
-        .slice(0, 10)
     )
-  );
+  ).slice(0, 10);
+
+  // Build warnings
+  const now = nowIso();
+  const staleWarnings = buildStaleWarnings(enrichedActiveClaims, enrichedOpenThreads, now);
+  const searchWarning =
+    input.mode === "search" && enrichedActiveClaims.length === 0 && enrichedOpenThreads.length === 0
+      ? ["No claims matched current search and scope."]
+      : [];
+  const allWarnings = [...staleWarnings, ...searchWarning];
 
   return {
     project_id: input.projectId,
-    generated_at: nowIso(),
+    generated_at: now,
     agent_id: input.agentId,
-    brief: buildBrief(activeClaimsResult.selected, openThreadsResult.selected),
-    active_claims: activeClaimsResult.selected,
-    open_threads: openThreadsResult.selected,
+    brief: buildBrief(enrichedActiveClaims, enrichedOpenThreads),
+    active_claims: enrichedActiveClaims,
+    open_threads: enrichedOpenThreads,
     recent_evidence_refs: recentEvidenceRefs,
-    warnings:
-      input.mode === "search" && activeClaimsResult.selected.length === 0 && openThreadsResult.selected.length === 0
-        ? ["No claims matched current search and scope."]
-        : undefined,
+    warnings: allWarnings.length > 0 ? allWarnings : undefined,
   };
 }

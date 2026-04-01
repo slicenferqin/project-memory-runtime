@@ -10,6 +10,7 @@ const MIGRATION_FILES = [
   "002_constraints.sql",
   "003_event_provenance.sql",
   "004_event_capture_path.sql",
+  "005_activation_indices.sql",
 ];
 
 export function loadSqlMigrations(): SqlMigration[] {

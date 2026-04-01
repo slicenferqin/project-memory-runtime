@@ -40,6 +40,22 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/cli:
+    dependencies:
+      '@slicenferqin/project-memory-adapter-claude-code':
+        specifier: workspace:*
+        version: link:../adapters/claude-code
+      '@slicenferqin/project-memory-runtime-core':
+        specifier: workspace:*
+        version: link:../runtime
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   packages/runtime:
     dependencies:
       better-sqlite3:

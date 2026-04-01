@@ -50,7 +50,7 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
   });
 
   const stats = runtime.getStats();
-  assert.equal(stats.migrationsApplied, 4);
+  assert.equal(stats.migrationsApplied, 5);
   assert.equal(stats.events, 1);
   assert.equal(stats.claims, 1);
   assert.equal(stats.outcomes, 1);

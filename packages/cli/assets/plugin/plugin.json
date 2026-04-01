@@ -1,0 +1,18 @@
+{
+  "name": "project-memory-runtime",
+  "version": "0.0.0",
+  "display_name": "Project Memory Runtime",
+  "description": "Evidence-backed project memory for AI coding agents. Tracks verified decisions, facts, and open threads with outcome-based confidence scoring.",
+  "author": "slicenferqin",
+  "license": "GPL-3.0-only",
+  "homepage": "https://github.com/nicepkg/project-memory-runtime",
+  "keywords": ["memory", "context", "decisions", "evidence", "outcomes"],
+  "capabilities": {
+    "hooks": true,
+    "skills": true
+  },
+  "install": {
+    "command": "npx project-memory-runtime init",
+    "post_install_message": "Project memory initialized. Start a Claude Code session to begin capturing context."
+  }
+}

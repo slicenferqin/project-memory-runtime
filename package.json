@@ -1,23 +1,23 @@
 {
-  "name": "project-memory-runtime",
+  "name": "@slicenferqin/project-memory-runtime-monorepo",
   "version": "0.0.0",
   "private": true,
   "description": "Local-first lifecycle memory runtime for coding agents",
   "license": "GPL-3.0-only",
   "engines": {
-    "node": ">=20 <21"
+    "node": ">=20"
   },
   "type": "module",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
-    "build": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm --filter @slicenferqin/project-memory-adapter-claude-code build",
+    "build": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm --filter @slicenferqin/project-memory-adapter-claude-code build && pnpm --filter project-memory-runtime build",
     "benchmark:runtime": "pnpm run preflight:test && pnpm --filter @slicenferqin/project-memory-runtime-benchmarks benchmark",
     "memoryctl": "pnpm --filter @slicenferqin/project-memoryctl cli",
     "preflight:test": "node ./scripts/ensure-node-version.mjs",
-    "rebuild:native": "pnpm rebuild better-sqlite3",
-    "test": "pnpm run preflight:test && pnpm run rebuild:native && pnpm run typecheck && pnpm run lint && pnpm --filter @slicenferqin/project-memory-runtime-core test && pnpm --filter @slicenferqin/project-memory-adapter-claude-code test && pnpm --filter @slicenferqin/project-memoryctl test",
-    "typecheck": "pnpm --filter @slicenferqin/project-memory-runtime-core typecheck && pnpm --filter @slicenferqin/project-memory-adapter-claude-code typecheck",
-    "lint": "pnpm exec eslint packages/runtime/src packages/runtime/tests packages/adapters/claude-code/src packages/adapters/claude-code/tests tools/benchmarks tools/memoryctl --max-warnings=0"
+    "rebuild:native": "cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && npm run build-release",
+    "test": "pnpm run preflight:test && pnpm run typecheck && pnpm run lint && pnpm --filter @slicenferqin/project-memory-runtime-core test && pnpm --filter @slicenferqin/project-memory-adapter-claude-code test && pnpm --filter @slicenferqin/project-memoryctl test && pnpm --filter project-memory-runtime test",
+    "typecheck": "pnpm --filter @slicenferqin/project-memory-runtime-core typecheck && pnpm --filter @slicenferqin/project-memory-adapter-claude-code typecheck && pnpm --filter project-memory-runtime typecheck",
+    "lint": "pnpm exec eslint packages/runtime/src packages/runtime/tests packages/adapters/claude-code/src packages/adapters/claude-code/tests packages/cli/src tools/benchmarks tools/memoryctl --max-warnings=0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

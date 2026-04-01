@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { NormalizedEvent } from "@slicenferqin/project-memory-runtime-core";
+import { type NormalizedEvent, asString } from "@slicenferqin/project-memory-runtime-core";
 import {
   ClaudeCodeAdapter,
   createClaudeCodeRuntime,
@@ -87,10 +87,6 @@ export interface ClaudeHookExecutionResult {
   context: ClaudeAdapterContext;
   events: NormalizedEvent[];
   injection?: ClaudeInjectionResult;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -7,16 +7,48 @@ import {
   type ClaudeHookEnvelope,
   type ClaudeHookExecutionOptions,
 } from "./hook-envelope.js";
+import {
+  buildClaudeHookSettings,
+  installClaudeHookSettings,
+  validateClaudeHookSettings,
+  type ClaudeHookSettingsInstallOptions,
+  type ClaudeHookSettingsOptions,
+} from "./hook-settings.js";
 
 function fail(message: string): never {
   throw new Error(message);
 }
 
-function parseArgs(argv: string[]): ClaudeHookExecutionOptions {
-  const options: ClaudeHookExecutionOptions = {};
+type ClaudeHookCliMode =
+  | "run"
+  | "print-settings"
+  | "install-settings"
+  | "validate-settings";
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
+interface ParsedCliArgs {
+  mode: ClaudeHookCliMode;
+  options: ClaudeHookExecutionOptions & ClaudeHookSettingsInstallOptions;
+}
+
+function parseArgs(argv: string[]): ParsedCliArgs {
+  const tokens = [...argv];
+  if (tokens[0] === "--") {
+    tokens.shift();
+  }
+  const firstToken = tokens[0];
+  const mode: ClaudeHookCliMode =
+    firstToken && !firstToken.startsWith("--")
+      ? (tokens.shift() as ClaudeHookCliMode)
+      : "run";
+
+  if (!["run", "print-settings", "install-settings", "validate-settings"].includes(mode)) {
+    fail(`unknown command: ${mode}`);
+  }
+
+  const options: ClaudeHookExecutionOptions & ClaudeHookSettingsInstallOptions = {};
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
     if (!token.startsWith("--")) continue;
 
     const key = token.slice(2);
@@ -25,7 +57,7 @@ function parseArgs(argv: string[]): ClaudeHookExecutionOptions {
       continue;
     }
 
-    const value = argv[index + 1];
+    const value = tokens[index + 1];
     if (!value || value.startsWith("--")) {
       fail(`missing value for --${key}`);
     }
@@ -55,6 +87,20 @@ function parseArgs(argv: string[]): ClaudeHookExecutionOptions {
       case "agent-version":
         options.agent_version = value;
         break;
+      case "command":
+        options.command = value;
+        break;
+      case "settings-file":
+        options.settings_file = value;
+        break;
+      case "timeout-seconds": {
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          fail("--timeout-seconds must be a positive integer");
+        }
+        options.timeout_seconds = parsed;
+        break;
+      }
       default:
         fail(`unknown option: --${key}`);
     }
@@ -62,7 +108,7 @@ function parseArgs(argv: string[]): ClaudeHookExecutionOptions {
     index += 1;
   }
 
-  return options;
+  return { mode, options };
 }
 
 async function readStdin(): Promise<string> {
@@ -90,16 +136,40 @@ function parseEnvelope(raw: string): ClaudeHookEnvelope {
 }
 
 async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
+  const { mode, options } = parseArgs(process.argv.slice(2));
+
+  if (mode === "print-settings") {
+    const settings = buildClaudeHookSettings(options as ClaudeHookSettingsOptions);
+    process.stdout.write(`${JSON.stringify(settings, null, 2)}\n`);
+    return;
+  }
+
+  if (mode === "install-settings") {
+    const result = installClaudeHookSettings(options);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+
+  if (mode === "validate-settings") {
+    const result = validateClaudeHookSettings(options);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.is_valid) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   const raw = await readStdin();
   const envelope = parseEnvelope(raw);
   const result = executeClaudeHookEnvelope(envelope, options);
 
-  if (envelope.hook_event_name === "SessionStart" && result.injection) {
-    const output = buildClaudeSessionStartHookOutput(result.injection);
-    if (output) {
-      process.stdout.write(`${output}\n`);
-    }
+  if (envelope.hook_event_name !== "SessionStart" || !result.injection) {
+    return;
+  }
+
+  const output = buildClaudeSessionStartHookOutput(result.injection);
+  if (output) {
+    process.stdout.write(`${output}\n`);
   }
 }
 

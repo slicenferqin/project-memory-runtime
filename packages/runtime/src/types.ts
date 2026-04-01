@@ -204,10 +204,18 @@ export interface ActivationLog {
   activation_reasons?: string[];
 }
 
+export interface OutcomeSummary {
+  positive_count: number;
+  negative_count: number;
+  outcome_types: OutcomeType[];
+  last_outcome_at?: string;
+}
+
 export interface RecallClaim extends Claim {
   recall_rank: number;
   activation_reasons: string[];
   evidence_refs: string[];
+  outcome_summary?: OutcomeSummary;
 }
 
 export interface RecallPacket {
@@ -285,9 +293,18 @@ export interface MarkClaimStaleInput {
   actor?: string;
 }
 
+export interface OutcomeTimelineEntry {
+  ts: string;
+  event_type: string;
+  description: string;
+  score_before?: number;
+  score_after?: number;
+}
+
 export interface ExplainClaimResult {
   claim: Claim;
   transitions: ClaimTransition[];
   activation_logs: ActivationLog[];
   related_outcomes: Outcome[];
+  outcome_timeline: OutcomeTimelineEntry[];
 }

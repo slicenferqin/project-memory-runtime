@@ -1,4 +1,5 @@
 import { RuntimeStorage } from "./storage/sqlite.js";
+import { nowIso, clamp, asString, daysBetween, POSITIVE_OUTCOME_TYPES, NEGATIVE_OUTCOME_TYPES } from "./utils.js";
 import type {
   ActivationLog,
   Claim,
@@ -9,6 +10,7 @@ import type {
   MarkClaimStaleInput,
   NormalizedEvent,
   Outcome,
+  OutcomeTimelineEntry,
   OutcomeType,
   ProjectSnapshotInput,
   RecallPacket,
@@ -20,8 +22,8 @@ import type {
   SessionBriefInput,
   VerifyClaimInput,
 } from "./types.js";
-import { buildIngestionArtifacts } from "./ingestion/service.js";
 import { buildRecallPacket } from "./recall/packet.js";
+import { buildIngestionArtifacts } from "./ingestion/service.js";
 import { scopeSignature } from "./scope.js";
 import {
   DEFAULT_ALLOWED_CAPTURE_PATHS,
@@ -33,40 +35,11 @@ import {
   validateClaimRecord,
 } from "./validation.js";
 
-const POSITIVE_OUTCOMES = new Set<OutcomeType>([
-  "test_pass",
-  "build_pass",
-  "commit_kept",
-  "issue_closed",
-  "human_kept",
-]);
-
-const NEGATIVE_OUTCOMES = new Set<OutcomeType>([
-  "test_fail",
-  "build_fail",
-  "commit_reverted",
-  "issue_reopened",
-  "human_corrected",
-  "manual_override",
-]);
-
 const STALE_TTL_DAYS: Record<Claim["type"], number> = {
   fact: 90,
   decision: 60,
   thread: 14,
 };
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
 
 function extractIssueId(event: NormalizedEvent): string | undefined {
   const explicit = asString(event.metadata?.issue_id);
@@ -92,17 +65,11 @@ function scoreNegative(oldScore: number, strength: number): number {
 }
 
 function isPositiveOutcome(type: OutcomeType): boolean {
-  return POSITIVE_OUTCOMES.has(type);
+  return POSITIVE_OUTCOME_TYPES.has(type);
 }
 
 function isNegativeOutcome(type: OutcomeType): boolean {
-  return NEGATIVE_OUTCOMES.has(type);
-}
-
-function daysBetween(fromIso: string, toIso: string): number {
-  const from = new Date(fromIso).getTime();
-  const to = new Date(toIso).getTime();
-  return (to - from) / (1000 * 60 * 60 * 24);
+  return NEGATIVE_OUTCOME_TYPES.has(type);
 }
 
 function buildTransition(
@@ -261,11 +228,13 @@ export class ProjectMemoryRuntime {
   buildSessionBrief(input: SessionBriefInput): RecallPacket {
     this.initialize();
     const claims = this.storage.listClaims(input.project_id);
+    const outcomes = this.storage.listOutcomes(input.project_id);
     return buildRecallPacket(
       {
         projectId: input.project_id,
         agentId: input.agent_id,
         claims,
+        outcomes,
         scope: input.scope,
         debug: input.debug,
         mode: "session_brief",
@@ -277,11 +246,13 @@ export class ProjectMemoryRuntime {
   buildProjectSnapshot(input: ProjectSnapshotInput): RecallPacket {
     this.initialize();
     const claims = this.storage.listClaims(input.project_id);
+    const outcomes = this.storage.listOutcomes(input.project_id);
     return buildRecallPacket(
       {
         projectId: input.project_id,
         agentId: input.agent_id,
         claims,
+        outcomes,
         scope: input.scope,
         debug: input.debug,
         mode: "project_snapshot",
@@ -293,11 +264,13 @@ export class ProjectMemoryRuntime {
   searchClaims(input: SearchClaimsInput): RecallPacket {
     this.initialize();
     const claims = this.storage.listClaims(input.project_id);
+    const outcomes = this.storage.listOutcomes(input.project_id);
     const packet = buildRecallPacket(
       {
         projectId: input.project_id,
         agentId: "memory.search",
         claims,
+        outcomes,
         scope: input.scope,
         debug: input.debug,
         query: input.query,
@@ -457,11 +430,56 @@ export class ProjectMemoryRuntime {
           outcome.related_event_ids.some((eventId) => sourceEventIds.has(eventId))
       );
 
+    // Build outcome timeline
+    const timeline: OutcomeTimelineEntry[] = [];
+
+    // Add creation event
+    timeline.push({
+      ts: claim.created_at,
+      event_type: "created",
+      description: `Claim created (${claim.verification_status})`,
+      score_before: undefined,
+      score_after: 0,
+    });
+
+    // Add transitions
+    for (const t of transitions) {
+      timeline.push({
+        ts: t.ts,
+        event_type: `transition:${t.to_status}`,
+        description: `${t.from_status ?? "—"} → ${t.to_status}: ${t.reason}`,
+      });
+    }
+
+    // Add outcomes with score progression
+    const sortedOutcomes = [...relatedOutcomes].sort((a, b) => a.ts.localeCompare(b.ts));
+    let runningScore = 0;
+    for (const outcome of sortedOutcomes) {
+      const scoreBefore = runningScore;
+      if (isPositiveOutcome(outcome.outcome_type)) {
+        runningScore = scorePositive(runningScore, outcome.strength);
+      } else if (isNegativeOutcome(outcome.outcome_type)) {
+        runningScore = scoreNegative(runningScore, outcome.strength);
+      }
+
+      timeline.push({
+        ts: outcome.ts,
+        event_type: outcome.outcome_type,
+        description: `${outcome.outcome_type}${outcome.notes ? `: ${outcome.notes}` : ""}`,
+        score_before: scoreBefore,
+        score_after: runningScore,
+      });
+    }
+
+    // Sort timeline chronologically
+    timeline.sort((a, b) => a.ts.localeCompare(b.ts));
+
     return {
       claim,
       transitions,
       activation_logs: activationLogs,
       related_outcomes: relatedOutcomes,
+      outcome_timeline: timeline,
     };
   }
 

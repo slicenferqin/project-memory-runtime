@@ -4,9 +4,9 @@ import path from "node:path";
 import { mkdtempSync } from "node:fs";
 import { ProjectMemoryRuntime } from "../../packages/runtime/dist/index.js";
 
-if (Number(process.versions.node.split(".")[0]) !== 20) {
+if (Number(process.versions.node.split(".")[0]) < 20) {
   throw new Error(
-    `Runtime benchmark requires Node 20.x for the supported native sqlite path. Current version: ${process.versions.node}`
+    `Runtime benchmark requires Node 20 or later. Current version: ${process.versions.node}`
   );
 }
 

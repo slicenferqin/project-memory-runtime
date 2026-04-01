@@ -1,11 +1,20 @@
 {
   "name": "@slicenferqin/project-memory-runtime-core",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Core runtime for Project Memory Runtime",
+  "version": "0.1.0",
+  "description": "Core runtime for Project Memory Runtime — evidence-backed lifecycle memory for AI coding agents",
   "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nicepkg/project-memory-runtime.git",
+    "directory": "packages/runtime"
+  },
+  "homepage": "https://github.com/nicepkg/project-memory-runtime",
+  "keywords": [
+    "ai", "memory", "runtime", "sqlite", "evidence",
+    "claims", "outcomes", "lifecycle"
+  ],
   "engines": {
-    "node": ">=20 <21"
+    "node": ">=20"
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -23,7 +32,7 @@
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.json && node ./scripts/copy-sql-assets.mjs",
     "clean": "rm -rf dist",
-    "test": "pnpm run build && node --test tests/runtime-smoke.test.mjs",
+    "test": "pnpm run build && node --test tests/runtime-smoke.test.mjs tests/outcome-visualization.test.mjs tests/activation-engine.test.mjs",
     "typecheck": "pnpm exec tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

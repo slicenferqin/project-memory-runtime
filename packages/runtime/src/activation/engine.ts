@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   ActivationLog,
   Claim,
@@ -7,6 +6,7 @@ import type {
   SuppressionReason,
 } from "../types.js";
 import { normalizeClaimScope, scopeSignature, scopeSpecificity } from "../scope.js";
+import { nowIso, clamp, hashId, daysBetween } from "../utils.js";
 
 const DEFAULT_WEIGHTS = {
   relevance: 0.1,
@@ -24,32 +24,12 @@ const FRESHNESS_LAMBDA: Record<Claim["type"], number> = {
   thread: 0.08,
 };
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9]+/i)
     .map((part) => part.trim())
     .filter(Boolean);
-}
-
-function hashLogId(...parts: string[]): string {
-  const hash = createHash("sha256");
-  for (const part of parts) hash.update(part);
-  return hash.digest("hex").slice(0, 24);
-}
-
-function daysBetween(fromIso: string, toIso: string): number {
-  const from = new Date(fromIso).getTime();
-  const to = new Date(toIso).getTime();
-  return Math.max(0, (to - from) / (1000 * 60 * 60 * 24));
 }
 
 function claimAnchor(claim: Claim): string {
@@ -240,7 +220,7 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
 
     if (!filter.eligible) {
       filtered.push({
-        id: hashLogId("flt", options.projectId, claim.id, filter.reason, now),
+        id: hashId("flt", options.projectId, claim.id, filter.reason, now),
         ts: now,
         project_id: options.projectId,
         claim_id: claim.id,
@@ -308,7 +288,7 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
 
     if (entry.claim.cardinality === "singleton" && seenSingletons.has(singletonSlot)) {
       dropped.push({
-        id: hashLogId("drp", options.projectId, entry.claim.id, "low_rank", now),
+        id: hashId("drp", options.projectId, entry.claim.id, "low_rank", now),
         ts: now,
         project_id: options.projectId,
         claim_id: entry.claim.id,
@@ -322,7 +302,7 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
 
     if (currentCount >= maxPerCanonicalKey) {
       dropped.push({
-        id: hashLogId("drp", options.projectId, entry.claim.id, "low_rank", now),
+        id: hashId("drp", options.projectId, entry.claim.id, "low_rank", now),
         ts: now,
         project_id: options.projectId,
         claim_id: entry.claim.id,
@@ -336,7 +316,7 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
 
     if (selected.length >= options.maxItems) {
       dropped.push({
-        id: hashLogId("drp", options.projectId, entry.claim.id, "token_budget", now),
+        id: hashId("drp", options.projectId, entry.claim.id, "token_budget", now),
         ts: now,
         project_id: options.projectId,
         claim_id: entry.claim.id,

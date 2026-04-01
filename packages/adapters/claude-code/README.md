@@ -2,10 +2,16 @@
 
 Reference adapter spike for Claude Code.
 
+Local manual test runbook:
+
+- 中文：[LOCAL-VALIDATION.zh-CN.md](./LOCAL-VALIDATION.zh-CN.md)
+- English: [LOCAL-VALIDATION.md](./LOCAL-VALIDATION.md)
+
 Current scope is intentionally narrow:
 
 - runtime-first local library
 - stdin/CLI entrypoint for hook execution
+- CLI-generated Claude hook settings for local wiring
 - controlled `capture_path` mapping
 - `SessionStart` recall injection
 - `PostToolUse` capture normalization
@@ -20,7 +26,6 @@ Current trust boundary in this spike:
 
 Not included in this spike:
 
-- real Claude Code installation wiring
 - production hook packaging
 - transcript persistence outside runtime
 - broad tool coverage beyond the tested normalization rules
@@ -54,6 +59,57 @@ CLI usage:
 ```bash
 cat hook-envelope.json | project-memory-claude-hook --data-dir .memory
 ```
+
+Install local Claude settings for this repo:
+
+```bash
+node ./packages/adapters/claude-code/dist/cli.js install-settings \
+  --settings-file .claude/settings.local.json
+```
+
+This writes managed hook entries for:
+
+- `SessionStart`
+- `PostToolUse`
+- `PostToolUseFailure`
+- `Stop`
+- `SessionEnd`
+- `PreCompact`
+
+By default the generated hook command is:
+
+```bash
+cd "$CLAUDE_PROJECT_DIR" && node ./packages/adapters/claude-code/dist/cli.js --data-dir "$CLAUDE_PROJECT_DIR/.memory/project-memory"
+```
+
+If you want to override the managed command explicitly:
+
+```bash
+node ./packages/adapters/claude-code/dist/cli.js print-settings \
+  --command 'node ./packages/adapters/claude-code/dist/cli.js' \
+  --data-dir '$CLAUDE_PROJECT_DIR/.memory/project-memory'
+```
+
+If you only want the JSON snippet without writing `.claude/settings.local.json`:
+
+```bash
+node ./packages/adapters/claude-code/dist/cli.js print-settings
+```
+
+Validate that the local Claude settings still contain exactly one managed Project Memory hook per supported event:
+
+```bash
+node ./packages/adapters/claude-code/dist/cli.js validate-settings \
+  --settings-file .claude/settings.local.json
+```
+
+Operational notes:
+
+- `install-settings` is idempotent for the managed Project Memory hook entries
+- unrelated Claude hooks already present in `settings.local.json` are preserved
+- the generated commands include a managed marker so later installs replace only Project Memory entries
+- `SessionStart` only emits `hookSpecificOutput.additionalContext` when the recall packet contains meaningful active claims or open threads
+- current public message APIs still normalize to `import.transcript`; trusted `claude_code.hook.*` capture paths remain opt-in only
 
 Current CLI support:
 

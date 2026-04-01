@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
 import type { Claim, ClaimScope, NormalizedEvent, Outcome, ResolutionRule } from "../types.js";
 import { normalizeClaimScope } from "../scope.js";
+import { hashId, asString } from "../utils.js";
 import {
   familyHintAllowedForEvent,
   hasTrustedNegativeLifecycleCapturePath,
@@ -12,12 +12,6 @@ interface MemoryHints {
   scope_hint?: ClaimScope;
   claim_type_hint?: Claim["type"];
   family_hint?: "current_strategy" | "blocker" | "rejected_strategy" | "open_question";
-}
-
-function hashId(...parts: string[]): string {
-  const hash = createHash("sha256");
-  for (const part of parts) hash.update(part);
-  return hash.digest("hex").slice(0, 24);
 }
 
 function slugify(value: string): string {
@@ -40,10 +34,6 @@ function eventScopeToClaimScope(event: NormalizedEvent): ClaimScope | undefined 
     cwd_prefix: event.scope.cwd,
     files: event.scope.files,
   });
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function asStringArray(value: unknown): string[] | undefined {
