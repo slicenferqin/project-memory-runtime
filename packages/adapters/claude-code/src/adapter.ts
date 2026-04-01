@@ -15,6 +15,7 @@ import {
   asString,
 } from "@slicenferqin/project-memory-runtime-core";
 import { ProjectMemoryRuntime as Runtime } from "@slicenferqin/project-memory-runtime-core";
+import { detectWorkspace, type WorkspaceInfo } from "./workspace.js";
 
 export type ClaudeHookName =
   | "SessionStart"
@@ -484,12 +485,33 @@ export function createClaudeCodeRuntime(
 
 export class ClaudeCodeAdapter {
   private readonly runtime: ProjectMemoryRuntime;
-  private readonly context: ClaudeAdapterContext;
+  private context: ClaudeAdapterContext;
   private readonly sessionPacketHashes = new Map<string, string>();
+  private currentWorkspace: WorkspaceInfo | null = null;
+  private readonly autoDetectWorkspace: boolean;
 
-  constructor(options: ClaudeAdapterOptions) {
+  constructor(options: ClaudeAdapterOptions & { autoDetectWorkspace?: boolean }) {
     this.runtime = options.runtime;
     this.context = options.context;
+    this.autoDetectWorkspace = options.autoDetectWorkspace ?? false;
+
+    if (this.autoDetectWorkspace) {
+      this.updateWorkspaceContext();
+    }
+  }
+
+  private updateWorkspaceContext(): void {
+    const cwd = this.context.cwd ?? process.cwd();
+    const workspace = detectWorkspace(cwd);
+
+    if (!this.currentWorkspace || this.currentWorkspace.workspace_root !== workspace.workspace_root) {
+      this.currentWorkspace = workspace;
+      this.context = {
+        ...this.context,
+        project_id: workspace.project_id,
+        workspace_id: workspace.project_id,
+      };
+    }
   }
 
   capture(input: ClaudeAdapterInput): NormalizedEvent[] {
@@ -505,6 +527,11 @@ export class ClaudeCodeAdapter {
 
   record(input: ClaudeAdapterInput | null): NormalizedEvent[] {
     if (!input) return [];
+
+    if (this.autoDetectWorkspace) {
+      this.updateWorkspaceContext();
+    }
+
     const events = this.capture(input);
     for (const event of events) {
       this.runtime.recordEvent(event);
