@@ -1,6 +1,6 @@
 {
   "name": "@slicenferqin/project-memory-runtime-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Core runtime for Project Memory Runtime — evidence-backed lifecycle memory for AI coding agents",
   "license": "GPL-3.0-only",
   "repository": {

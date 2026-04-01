@@ -1,0 +1,75 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && node ./packages/adapters/claude-code/dist/cli.js --data-dir \"$CLAUDE_PROJECT_DIR/.memory/project-memory\" # project-memory-runtime-managed-claude-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && node ./packages/adapters/claude-code/dist/cli.js --data-dir \"$CLAUDE_PROJECT_DIR/.memory/project-memory\" # project-memory-runtime-managed-claude-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && node ./packages/adapters/claude-code/dist/cli.js --data-dir \"$CLAUDE_PROJECT_DIR/.memory/project-memory\" # project-memory-runtime-managed-claude-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && node ./packages/adapters/claude-code/dist/cli.js --data-dir \"$CLAUDE_PROJECT_DIR/.memory/project-memory\" # project-memory-runtime-managed-claude-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && node ./packages/adapters/claude-code/dist/cli.js --data-dir \"$CLAUDE_PROJECT_DIR/.memory/project-memory\" # project-memory-runtime-managed-claude-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && node ./packages/adapters/claude-code/dist/cli.js --data-dir \"$CLAUDE_PROJECT_DIR/.memory/project-memory\" # project-memory-runtime-managed-claude-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
