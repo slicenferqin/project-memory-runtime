@@ -8,7 +8,13 @@ export type ClaudeManagedHookEvent =
   | "PostToolUseFailure"
   | "Stop"
   | "SessionEnd"
-  | "PreCompact";
+  | "PreCompact"
+  | "UserPromptSubmit"
+  | "PostCompact"
+  | "StopFailure"
+  | "SubagentStop"
+  | "PreToolUse"
+  | "Setup";
 
 export interface ClaudeCommandHookConfig {
   type: "command";
@@ -63,6 +69,12 @@ const MANAGED_HOOK_MATCHERS: Record<ClaudeManagedHookEvent, string | undefined> 
   Stop: undefined,
   SessionEnd: "*",
   PreCompact: "*",
+  UserPromptSubmit: undefined,
+  PostCompact: "*",
+  StopFailure: undefined,
+  SubagentStop: undefined,
+  PreToolUse: "Bash",
+  Setup: "maintenance",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

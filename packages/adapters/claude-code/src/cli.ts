@@ -163,13 +163,30 @@ async function main(): Promise<void> {
   const envelope = parseEnvelope(raw);
   const result = executeClaudeHookEnvelope(envelope, options);
 
-  if (envelope.hook_event_name !== "SessionStart" || !result.injection) {
+  // SessionStart: inject session brief
+  if (envelope.hook_event_name === "SessionStart" && result.injection) {
+    const output = buildClaudeSessionStartHookOutput(result.injection);
+    if (output) {
+      process.stdout.write(`${output}\n`);
+    }
     return;
   }
 
-  const output = buildClaudeSessionStartHookOutput(result.injection);
-  if (output) {
+  // UserPromptSubmit / PreToolUse: inject additional context
+  if (result.additionalContext) {
+    const output = JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: envelope.hook_event_name,
+        additionalContext: result.additionalContext,
+      },
+    });
     process.stdout.write(`${output}\n`);
+    return;
+  }
+
+  // Setup maintenance: log sweep results
+  if (typeof result.staleClaimed === "number" && result.staleClaimed > 0) {
+    process.stderr.write(`project-memory: swept ${result.staleClaimed} stale claim(s)\n`);
   }
 }
 

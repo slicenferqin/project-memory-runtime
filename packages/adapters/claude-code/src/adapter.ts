@@ -503,7 +503,8 @@ export class ClaudeCodeAdapter {
     return normalizeMessageEvent(this.context, input);
   }
 
-  record(input: ClaudeAdapterInput): NormalizedEvent[] {
+  record(input: ClaudeAdapterInput | null): NormalizedEvent[] {
+    if (!input) return [];
     const events = this.capture(input);
     for (const event of events) {
       this.runtime.recordEvent(event);
@@ -553,6 +554,22 @@ export class ClaudeCodeAdapter {
       deduped: false,
       packet_hash: packetHash,
     };
+  }
+
+  injectAdditionalContext(query: string): string | null {
+    if (!query.trim()) return null;
+
+    const packet = this.runtime.searchClaims({
+      project_id: this.context.project_id,
+      query,
+      scope: buildRecallScope(this.context),
+      limit: 5,
+    });
+
+    const hasClaims = packet.active_claims.length > 0 || packet.open_threads.length > 0;
+    if (!hasClaims) return null;
+
+    return formatInjection(packet);
   }
 }
 

@@ -18,7 +18,13 @@ export type ClaudeHookEnvelopeName =
   | "PostToolUseFailure"
   | "Stop"
   | "SessionEnd"
-  | "PreCompact";
+  | "PreCompact"
+  | "UserPromptSubmit"
+  | "PostCompact"
+  | "StopFailure"
+  | "SubagentStop"
+  | "PreToolUse"
+  | "Setup";
 
 export interface ClaudeHookEnvelopeBase {
   hook_event_name: ClaudeHookEnvelopeName;
@@ -61,12 +67,57 @@ export interface ClaudePreCompactEnvelope extends ClaudeHookEnvelopeBase {
   hook_event_name: "PreCompact";
 }
 
+export interface ClaudeUserPromptSubmitEnvelope extends ClaudeHookEnvelopeBase {
+  hook_event_name: "UserPromptSubmit";
+  prompt?: string;
+}
+
+export interface ClaudePostCompactEnvelope extends ClaudeHookEnvelopeBase {
+  hook_event_name: "PostCompact";
+  trigger?: "manual" | "auto";
+  compact_summary?: string;
+}
+
+export interface ClaudeStopFailureEnvelope extends ClaudeHookEnvelopeBase {
+  hook_event_name: "StopFailure";
+  error?: unknown;
+  error_details?: string;
+  last_assistant_message?: string;
+}
+
+export interface ClaudeSubagentStopEnvelope extends ClaudeHookEnvelopeBase {
+  hook_event_name: "SubagentStop";
+  agent_id?: string;
+  agent_type?: string;
+  agent_transcript_path?: string;
+  last_assistant_message?: string;
+  stop_hook_active?: boolean;
+}
+
+export interface ClaudePreToolUseEnvelope extends ClaudeHookEnvelopeBase {
+  hook_event_name: "PreToolUse";
+  tool_name: string;
+  tool_input?: Record<string, unknown>;
+  tool_use_id?: string;
+}
+
+export interface ClaudeSetupEnvelope extends ClaudeHookEnvelopeBase {
+  hook_event_name: "Setup";
+  trigger?: "init" | "maintenance";
+}
+
 export type ClaudeHookEnvelope =
   | ClaudeSessionStartEnvelope
   | ClaudePostToolUseEnvelope
   | ClaudeStopEnvelope
   | ClaudeSessionEndEnvelope
-  | ClaudePreCompactEnvelope;
+  | ClaudePreCompactEnvelope
+  | ClaudeUserPromptSubmitEnvelope
+  | ClaudePostCompactEnvelope
+  | ClaudeStopFailureEnvelope
+  | ClaudeSubagentStopEnvelope
+  | ClaudePreToolUseEnvelope
+  | ClaudeSetupEnvelope;
 
 export interface ClaudeHookExecutionOptions extends ClaudeCodeRuntimeConfig {
   project_id?: string;
@@ -79,14 +130,19 @@ export interface ClaudeHookExecutionOptions extends ClaudeCodeRuntimeConfig {
 
 export interface ParsedClaudeHookEnvelope {
   context: ClaudeAdapterContext;
-  input: ClaudeAdapterInput;
+  input: ClaudeAdapterInput | null;
   shouldInjectSessionBrief: boolean;
+  shouldInjectAdditionalContext: boolean;
+  additionalContextQuery?: string;
+  maintenanceSweep?: boolean;
 }
 
 export interface ClaudeHookExecutionResult {
   context: ClaudeAdapterContext;
   events: NormalizedEvent[];
   injection?: ClaudeInjectionResult;
+  additionalContext?: string | null;
+  staleClaimed?: number;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -161,6 +217,7 @@ export function parseClaudeHookEnvelope(
       return {
         context,
         shouldInjectSessionBrief: true,
+        shouldInjectAdditionalContext: false,
         input: {
           hook: "SessionStart",
           note: `Claude Code session started (${envelope.source ?? "unknown"})`,
@@ -190,6 +247,7 @@ export function parseClaudeHookEnvelope(
       return {
         context,
         shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: false,
         input: {
           hook: envelope.hook_event_name,
           tool_name: envelope.tool_name,
@@ -217,6 +275,7 @@ export function parseClaudeHookEnvelope(
       return {
         context,
         shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: false,
         input: {
           hook: "Stop",
           note: envelope.last_assistant_message ?? "Claude Code stop hook fired",
@@ -231,6 +290,7 @@ export function parseClaudeHookEnvelope(
       return {
         context,
         shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: false,
         input: {
           hook: "SessionEnd",
           note: envelope.reason ? `Claude Code session ended: ${envelope.reason}` : undefined,
@@ -244,12 +304,125 @@ export function parseClaudeHookEnvelope(
       return {
         context,
         shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: false,
         input: {
           hook: "PreCompact",
           note: "Claude Code pre-compact lifecycle signal",
           metadata: baseMetadata,
         },
       };
+
+    // ─── New hooks ──────────────────────────────────────────────
+
+    case "UserPromptSubmit": {
+      const prompt = asString(envelope.prompt) ?? "";
+      return {
+        context,
+        shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: true,
+        additionalContextQuery: prompt,
+        input: {
+          kind: "user_message",
+          content: prompt,
+          metadata: {
+            ...baseMetadata,
+            source: "user_prompt_submit",
+          },
+        },
+      };
+    }
+
+    case "PostCompact": {
+      const summary = asString(envelope.compact_summary) ?? "Context compacted";
+      return {
+        context,
+        shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: false,
+        input: {
+          hook: "SessionEnd",
+          note: summary,
+          metadata: {
+            ...baseMetadata,
+            trigger: envelope.trigger,
+            compact_summary: envelope.compact_summary,
+            source: "post_compact",
+          },
+        },
+      };
+    }
+
+    case "StopFailure": {
+      const errorDetails = asString(envelope.error_details) ?? String(envelope.error ?? "unknown error");
+      const lastMsg = asString(envelope.last_assistant_message);
+      return {
+        context,
+        shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: false,
+        input: {
+          hook: "SessionEnd",
+          note: lastMsg
+            ? `Claude Code stopped by API error (partial response preserved): ${lastMsg.slice(0, 200)}`
+            : `Claude Code stopped by API error: ${errorDetails.slice(0, 200)}`,
+          metadata: {
+            ...baseMetadata,
+            error_details: errorDetails,
+            last_assistant_message: lastMsg,
+            is_error: true,
+            source: "stop_failure",
+          },
+        },
+      };
+    }
+
+    case "SubagentStop": {
+      const lastMsg = asString(envelope.last_assistant_message) ?? "Subagent completed";
+      return {
+        context,
+        shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: false,
+        input: {
+          hook: "Stop",
+          note: lastMsg,
+          metadata: {
+            ...baseMetadata,
+            subagent_id: envelope.agent_id,
+            subagent_type: envelope.agent_type,
+            transcript_path: envelope.agent_transcript_path,
+            source: "subagent_stop",
+          },
+        },
+      };
+    }
+
+    case "PreToolUse": {
+      const command = asString(asRecord(envelope.tool_input)?.command) ?? envelope.tool_name;
+      return {
+        context,
+        shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: true,
+        additionalContextQuery: command,
+        input: null, // query-only — no event recorded
+      };
+    }
+
+    case "Setup": {
+      const isMaintenanceSweep = envelope.trigger === "maintenance";
+      return {
+        context,
+        shouldInjectSessionBrief: false,
+        shouldInjectAdditionalContext: false,
+        maintenanceSweep: isMaintenanceSweep,
+        input: {
+          hook: "SessionStart",
+          note: `Claude Code setup: ${envelope.trigger ?? "unknown"}`,
+          metadata: {
+            ...baseMetadata,
+            trigger: envelope.trigger,
+            source: "setup",
+          },
+        },
+      };
+    }
   }
 }
 
@@ -281,15 +454,31 @@ export function executeClaudeHookEnvelope(
       runtime,
       context: parsed.context,
     });
-    const events = adapter.record(parsed.input);
+
+    // Record events (skip for query-only hooks like PreToolUse where input is null)
+    const events = parsed.input ? adapter.record(parsed.input) : [];
+
+    // Session brief injection (SessionStart only)
     const injection = parsed.shouldInjectSessionBrief
       ? adapter.injectSessionBrief()
+      : undefined;
+
+    // Additional context injection (UserPromptSubmit, PreToolUse)
+    const additionalContext = parsed.shouldInjectAdditionalContext
+      ? adapter.injectAdditionalContext(parsed.additionalContextQuery ?? "")
+      : undefined;
+
+    // Maintenance sweep (Setup with trigger=maintenance)
+    const staleClaimed = parsed.maintenanceSweep
+      ? runtime.sweepStaleClaims()
       : undefined;
 
     return {
       context: parsed.context,
       events,
       injection,
+      additionalContext,
+      staleClaimed,
     };
   } finally {
     runtime.close();
