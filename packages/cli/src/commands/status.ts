@@ -1,15 +1,38 @@
-import type { Claim } from "@slicenferqin/project-memory-runtime-core";
-import { createRuntime, resolveProjectId, isJson, truncate, type CliOptions } from "../shared.js";
+import type { Claim } from "@slicenfer/project-memory-runtime-core";
+import {
+  createRuntime,
+  resolveProjectId,
+  resolveWorkspaceId,
+  isJson,
+  runtimeDisabledMessage,
+  truncate,
+  type CliOptions,
+} from "../shared.js";
 
 export function runStatus(options: CliOptions): void {
+  const disabledMessage = runtimeDisabledMessage(options);
+  if (disabledMessage) {
+    console.log(`Project Memory unavailable: ${disabledMessage}`);
+    return;
+  }
+
   const runtime = createRuntime(options);
   try {
     const projectId = resolveProjectId(options);
     const stats = runtime.getStats();
     const claims = runtime.listClaims(projectId);
+    const latestCheckpoint = runtime.getLatestCheckpoint({
+      project_id: projectId,
+      workspace_id: resolveWorkspaceId(options),
+    });
 
     if (isJson(options)) {
-      console.log(JSON.stringify({ project_id: projectId, stats, claim_summary: summarizeClaims(claims) }, null, 2));
+      console.log(JSON.stringify({
+        project_id: projectId,
+        stats,
+        latest_checkpoint: latestCheckpoint,
+        claim_summary: summarizeClaims(claims),
+      }, null, 2));
       return;
     }
 
@@ -24,7 +47,15 @@ export function runStatus(options: CliOptions): void {
     console.log(`    Outcomes:        ${stats.outcomes}`);
     console.log(`    Transitions:     ${stats.transitions}`);
     console.log(`    Activation Logs: ${stats.activationLogs}`);
+    console.log(`    Checkpoints:     ${stats.checkpoints}`);
     console.log(`    Migrations:      ${stats.migrationsApplied}`);
+
+    if (latestCheckpoint) {
+      console.log("");
+      console.log("  Latest checkpoint:");
+      console.log(`    ${latestCheckpoint.created_at} [${latestCheckpoint.status}/${latestCheckpoint.source}]`);
+      console.log(`    ${truncate(latestCheckpoint.summary, 80)}`);
+    }
 
     const summary = summarizeClaims(claims);
     if (claims.length > 0) {

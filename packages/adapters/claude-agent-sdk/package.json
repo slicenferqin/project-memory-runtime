@@ -1,17 +1,22 @@
 {
-  "name": "project-memory-runtime",
+  "name": "@slicenfer/project-memory-adapter-claude-agent-sdk",
   "version": "0.3.0",
-  "description": "CLI for Project Memory Runtime — evidence-backed lifecycle memory for AI coding agents",
+  "description": "Claude Agent SDK adapter for Project Memory Runtime — in-process hook bridge and options wrapper",
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/nicepkg/project-memory-runtime.git",
-    "directory": "packages/cli"
+    "directory": "packages/adapters/claude-agent-sdk"
   },
   "homepage": "https://github.com/nicepkg/project-memory-runtime",
   "keywords": [
-    "ai", "memory", "context", "claude", "agent",
-    "decisions", "evidence", "outcomes", "lifecycle"
+    "ai",
+    "claude",
+    "claude-agent-sdk",
+    "hooks",
+    "adapter",
+    "memory",
+    "agent"
   ],
   "engines": {
     "node": ">=20"
@@ -19,10 +24,6 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "project-memory-runtime": "./dist/cli.js",
-    "pmr": "./dist/cli.js"
-  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -31,20 +32,22 @@
   },
   "files": [
     "dist",
-    "assets",
     "README.md"
   ],
   "scripts": {
     "build": "pnpm --filter @slicenfer/project-memory-runtime-core build && pnpm --filter @slicenfer/project-memory-adapter-claude-code build && pnpm exec tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "test": "pnpm run build && node --test tests/*.test.mjs",
+    "test": "pnpm --filter @slicenfer/project-memory-runtime-core build && pnpm --filter @slicenfer/project-memory-adapter-claude-code build && pnpm run build && node --test tests/*.test.mjs",
     "typecheck": "pnpm --filter @slicenfer/project-memory-runtime-core build && pnpm --filter @slicenfer/project-memory-adapter-claude-code build && pnpm exec tsc -p tsconfig.json --noEmit"
   },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.91"
+  },
   "dependencies": {
-    "@slicenfer/project-memory-runtime-core": "workspace:*",
     "@slicenfer/project-memory-adapter-claude-code": "workspace:*"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.91",
     "@types/node": "^22.10.2",
     "typescript": "^5.6.3"
   }

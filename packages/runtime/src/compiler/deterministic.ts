@@ -88,6 +88,15 @@ function extractPackageManager(event: NormalizedEvent): string | undefined {
   const metadataValue = asString(event.metadata?.package_manager);
   if (metadataValue) return metadataValue;
 
+  const commandName = asString(event.metadata?.command_name);
+  if (commandName) {
+    const normalizedCommand = commandName.toLowerCase();
+    if (/\bpnpm\b/.test(normalizedCommand)) return "pnpm";
+    if (/\byarn\b/.test(normalizedCommand)) return "yarn";
+    if (/\bbun\b/.test(normalizedCommand)) return "bun";
+    if (/\bnpm\b/.test(normalizedCommand)) return "npm";
+  }
+
   const content = event.content.toLowerCase();
   if (/\bpnpm\b/.test(content)) return "pnpm";
   if (/\byarn\b/.test(content)) return "yarn";
@@ -111,6 +120,11 @@ function extractTestFramework(event: NormalizedEvent): string | undefined {
 function extractBuildCommand(event: NormalizedEvent): string | undefined {
   const metadataValue = asString(event.metadata?.build_command);
   if (metadataValue) return metadataValue;
+
+  const commandName = asString(event.metadata?.command_name);
+  if (commandName && /\b(?:pnpm|npm|yarn|bun)\s+build\b/.test(commandName)) {
+    return commandName;
+  }
 
   const content = event.content;
   const match = content.match(/\b(?:pnpm|npm|yarn|bun)\s+build\b/);

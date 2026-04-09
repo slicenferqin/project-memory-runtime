@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import fs, { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -50,12 +50,13 @@ test("runtime initializes sqlite schema and stores minimal records", async () =>
   });
 
   const stats = runtime.getStats();
-  assert.equal(stats.migrationsApplied, 5);
+  assert.equal(stats.migrationsApplied, 6);
   assert.equal(stats.events, 1);
   assert.equal(stats.claims, 1);
   assert.equal(stats.outcomes, 1);
   assert.equal(stats.transitions, 0);
   assert.equal(stats.activationLogs, 0);
+  assert.equal(stats.checkpoints, 0);
 
   runtime.close();
 });
@@ -554,6 +555,134 @@ test("runtime builds session brief and search results with activation logs", asy
   assert.ok(
     activationLogs.some((log) => log.suppression_reason === "archived" || log.suppression_reason === "token_budget")
   );
+
+  const touchedClaims = runtime.listClaims("github.com/acme/demo");
+  const activatedFact = touchedClaims.find((claim) => claim.id === "clm-fact");
+  const activatedThread = touchedClaims.find((claim) => claim.id === "clm-thread-open");
+  assert.ok(activatedFact?.last_activated_at, "selected fact should be marked recently activated");
+  assert.ok(activatedThread?.last_activated_at, "selected thread should be marked recently activated");
+
+  runtime.close();
+});
+
+test("runtime records, verifies, and injects continuation checkpoints", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-checkpoint-"));
+  const worktreeDir = path.join(tempDir, "workspace");
+  fs.mkdirSync(worktreeDir, { recursive: true });
+  const hotFile = path.join(worktreeDir, "src", "auth.ts");
+  fs.mkdirSync(path.dirname(hotFile), { recursive: true });
+  fs.writeFileSync(hotFile, "export const authMode = 'sqlite';\n");
+
+  const { ProjectMemoryRuntime } = await import("../dist/index.js");
+  const runtime = new ProjectMemoryRuntime({ dataDir: tempDir });
+  const admin = runtime.getAdminApi();
+  runtime.initialize();
+
+  admin.insertClaimRecord({
+    id: "clm-thread",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "thread",
+    assertion_kind: "todo",
+    canonical_key: "thread.issue.42",
+    cardinality: "singleton",
+    content: "Refactor auth module",
+    source_event_ids: ["evt-thread"],
+    confidence: 0.9,
+    importance: 0.9,
+    outcome_score: 0,
+    verification_status: "user_confirmed",
+    status: "active",
+    thread_status: "open",
+    scope: {
+      branch: "main",
+      cwd_prefix: worktreeDir,
+      files: [hotFile],
+    },
+  });
+
+  admin.insertClaimRecord({
+    id: "clm-decision",
+    created_at: "2026-03-12T00:00:01.000Z",
+    project_id: "github.com/acme/demo",
+    type: "decision",
+    assertion_kind: "instruction",
+    canonical_key: "decision.persistence.backend",
+    cardinality: "singleton",
+    content: "Use SQLite backend",
+    source_event_ids: ["evt-decision"],
+    confidence: 0.9,
+    importance: 0.8,
+    outcome_score: 0,
+    verification_status: "user_confirmed",
+    status: "active",
+    scope: {
+      branch: "main",
+      cwd_prefix: worktreeDir,
+      files: [hotFile],
+    },
+  });
+
+  const checkpoint = runtime.recordSessionCheckpoint({
+    project_id: "github.com/acme/demo",
+    session_id: "session-1",
+    workspace_id: "ws-1",
+    agent_id: "claude-code",
+    source: "session_end",
+    cwd: worktreeDir,
+    scope: {
+      branch: "main",
+      cwd_prefix: worktreeDir,
+    },
+    summary_hint: "Checkpoint after auth refactor work",
+  });
+
+  assert.equal(checkpoint.status, "active");
+  assert.ok(
+    checkpoint.hot_files.some((filePath) => filePath.endsWith(path.join("src", "auth.ts"))),
+    "checkpoint should capture the hot file path"
+  );
+
+  const brief = runtime.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    session_id: "session-2",
+    workspace_id: "ws-1",
+    agent_id: "claude-code",
+    cwd: worktreeDir,
+    scope: {
+      branch: "main",
+      cwd_prefix: worktreeDir,
+    },
+  });
+
+  assert.ok(brief.checkpoint, "session brief should include latest checkpoint");
+  assert.equal(brief.checkpoint?.status, "active");
+  assert.equal(brief.checkpoint?.summary, "Checkpoint after auth refactor work");
+  assert.match(brief.checkpoint?.next_action ?? "", /继续处理：Refactor auth module/);
+
+  fs.writeFileSync(hotFile, "export const authMode = 'postgres';\n");
+  const rehydrated = runtime.buildSessionBrief({
+    project_id: "github.com/acme/demo",
+    session_id: "session-3",
+    workspace_id: "ws-1",
+    agent_id: "claude-code",
+    cwd: worktreeDir,
+    scope: {
+      branch: "main",
+      cwd_prefix: worktreeDir,
+    },
+  });
+
+  assert.equal(rehydrated.checkpoint?.status, "stale");
+  assert.equal(rehydrated.checkpoint?.next_action, undefined);
+  assert.ok(
+    rehydrated.warnings?.some((warning) => warning.includes("hot files changed")),
+    "rehydration should warn when hot files changed"
+  );
+
+  const checkpointRecords = runtime.listSessionCheckpoints("github.com/acme/demo");
+  assert.equal(checkpointRecords.length, 1, "duplicate checkpoint content should be deduped");
+  assert.equal(checkpointRecords[0]?.status, "stale");
 
   runtime.close();
 });

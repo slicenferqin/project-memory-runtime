@@ -1,7 +1,20 @@
 import process from "node:process";
-import { createRuntime, resolveProjectId, isJson, formatClaimLine, type CliOptions } from "../shared.js";
+import {
+  createRuntime,
+  resolveProjectId,
+  isJson,
+  formatClaimLine,
+  runtimeDisabledMessage,
+  type CliOptions,
+} from "../shared.js";
 
 export function runSearch(positional: string[], options: CliOptions): void {
+  const disabledMessage = runtimeDisabledMessage(options);
+  if (disabledMessage) {
+    console.log(`Project Memory unavailable: ${disabledMessage}`);
+    return;
+  }
+
   const query = positional.join(" ").trim();
   if (!query && !options.type && !options.status) {
     console.error("Usage: pmr search \"<query>\" [--type decision|fact|thread] [--status active|stale] [--limit N]");

@@ -93,6 +93,12 @@ function stableSerialize(value) {
   return String(value);
 }
 
+function averageSerializedSize(values) {
+  if (values.length === 0) return 0;
+  const total = values.reduce((sum, value) => sum + stableSerialize(value).length, 0);
+  return total / values.length;
+}
+
 function eventText(event) {
   return stableSerialize({
     event_type: event.event_type,
@@ -471,6 +477,11 @@ function runSessionRecoveryBenchmark() {
     activeRecall.recall >= 0.66 &&
     threadRecall.recall >= 0.8 &&
     activeDeltaVsKeyword > 0;
+  const commandObservationEvents = runtime
+    .listEvents("github.com/acme/demo")
+    .filter((event) =>
+      ["command_result", "test_result", "build_result", "lint_result", "benchmark_result"].includes(event.event_type)
+    );
 
   runtime.close();
 
@@ -493,6 +504,14 @@ function runSessionRecoveryBenchmark() {
       open_thread_recall_delta_vs_keyword: round(
         threadDeltaVsKeyword
       ),
+      avg_command_observation_chars: round(
+        averageSerializedSize(commandObservationEvents.map((event) => ({
+          content: event.content,
+          metadata: event.metadata ?? null,
+        })))
+      ),
+      session_brief_chars: packet.brief.length,
+      session_brief_packet_chars: stableSerialize(packet).length,
       active_claim_hits: activeRecall.hits,
       open_thread_hits: threadRecall.hits,
     },

@@ -41,6 +41,11 @@ function freshness(claim: Claim, now: string): number {
   return Math.exp(-lambda * daysBetween(claimAnchor(claim), now));
 }
 
+function activationRecency(claim: Claim): number {
+  if (!claim.last_activated_at) return 0;
+  return new Date(claim.last_activated_at).getTime();
+}
+
 function fileScopeMatches(claimFiles: string[] | undefined, queryFiles: string[] | undefined): boolean {
   if (!claimFiles?.length) return true;
   if (!queryFiles?.length) return false;
@@ -255,6 +260,7 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
     ];
     if (claim.pinned) reasons.push("pinned");
     if (claim.type === "thread" && claim.thread_status) reasons.push(`thread:${claim.thread_status}`);
+    if (claim.last_activated_at) reasons.push("hot:recently_activated");
 
     ranked.push({
       claim,
@@ -270,7 +276,9 @@ export function activateClaims(options: ActivateClaimsOptions): ActivationResult
       scopeSpecificity(normalizeClaimScope(b.claim.scope)) -
       scopeSpecificity(normalizeClaimScope(a.claim.scope));
     if (specificityDelta !== 0) return specificityDelta;
-    return b.rankScore - a.rankScore;
+    const scoreDelta = b.rankScore - a.rankScore;
+    if (Math.abs(scoreDelta) > 1e-6) return scoreDelta;
+    return activationRecency(b.claim) - activationRecency(a.claim);
   });
 
   const selected: RecallClaim[] = [];

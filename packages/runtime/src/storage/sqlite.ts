@@ -11,6 +11,8 @@ import {
   type RuntimeConfig,
   type RuntimePaths,
   type RuntimeStats,
+  type SessionCheckpoint,
+  type SessionCheckpointStatus,
 } from "../types.js";
 import { normalizeClaimScope, singletonScopeCompatible } from "../scope.js";
 import {
@@ -18,6 +20,7 @@ import {
   validateEventRecord,
   validateOutcomeRecord,
   assertClaimTransitionAllowed,
+  validateSessionCheckpointRecord,
 } from "../validation.js";
 import { loadSqlMigrations } from "./migrations.js";
 import { nowIso } from "../utils.js";
@@ -107,6 +110,28 @@ interface ActivationLogRow {
   rank_score: number | null;
   packing_decision: string | null;
   activation_reasons_json: string | null;
+}
+
+interface SessionCheckpointRow {
+  id: string;
+  created_at: string;
+  project_id: string;
+  session_id: string;
+  workspace_id: string | null;
+  branch: string | null;
+  repo_head: string | null;
+  status: string;
+  source: string;
+  summary: string;
+  current_goal: string | null;
+  next_action: string | null;
+  blocking_reason: string | null;
+  hot_claim_ids_json: string;
+  hot_files_json: string;
+  evidence_refs_json: string;
+  packet_hash: string;
+  hot_file_digests_json: string | null;
+  stale_reason: string | null;
 }
 
 interface CountRow {
@@ -367,6 +392,60 @@ export class RuntimeStorage {
     });
   }
 
+  insertSessionCheckpoint(checkpoint: SessionCheckpoint): void {
+    this.upsertSessionCheckpoint(checkpoint);
+  }
+
+  upsertSessionCheckpoint(checkpoint: SessionCheckpoint): void {
+    validateSessionCheckpointRecord(checkpoint);
+    const stmt = this.db.prepare(`
+      INSERT INTO session_checkpoints (
+        id, created_at, project_id, session_id, workspace_id, branch, repo_head, status, source,
+        summary, current_goal, next_action, blocking_reason, hot_claim_ids_json, hot_files_json,
+        evidence_refs_json, packet_hash, hot_file_digests_json, stale_reason
+      ) VALUES (
+        @id, @created_at, @project_id, @session_id, @workspace_id, @branch, @repo_head, @status, @source,
+        @summary, @current_goal, @next_action, @blocking_reason, @hot_claim_ids_json, @hot_files_json,
+        @evidence_refs_json, @packet_hash, @hot_file_digests_json, @stale_reason
+      )
+      ON CONFLICT(project_id, session_id, source, packet_hash) DO UPDATE SET
+        branch = excluded.branch,
+        repo_head = excluded.repo_head,
+        status = excluded.status,
+        summary = excluded.summary,
+        current_goal = excluded.current_goal,
+        next_action = excluded.next_action,
+        blocking_reason = excluded.blocking_reason,
+        hot_claim_ids_json = excluded.hot_claim_ids_json,
+        hot_files_json = excluded.hot_files_json,
+        evidence_refs_json = excluded.evidence_refs_json,
+        hot_file_digests_json = excluded.hot_file_digests_json,
+        stale_reason = excluded.stale_reason
+    `);
+
+    stmt.run({
+      id: checkpoint.id,
+      created_at: checkpoint.created_at,
+      project_id: checkpoint.project_id,
+      session_id: checkpoint.session_id,
+      workspace_id: nullable(checkpoint.workspace_id),
+      branch: nullable(checkpoint.branch),
+      repo_head: nullable(checkpoint.repo_head),
+      status: checkpoint.status,
+      source: checkpoint.source,
+      summary: checkpoint.summary,
+      current_goal: nullable(checkpoint.current_goal),
+      next_action: nullable(checkpoint.next_action),
+      blocking_reason: nullable(checkpoint.blocking_reason),
+      hot_claim_ids_json: serializeJson(checkpoint.hot_claim_ids),
+      hot_files_json: serializeJson(checkpoint.hot_files),
+      evidence_refs_json: serializeJson(checkpoint.evidence_refs),
+      packet_hash: checkpoint.packet_hash,
+      hot_file_digests_json: serializeJson(checkpoint.hot_file_digests),
+      stale_reason: nullable(checkpoint.stale_reason),
+    });
+  }
+
   listEvents(projectId?: string): NormalizedEvent[] {
     const rows = projectId
       ? (this.db
@@ -397,10 +476,77 @@ export class RuntimeStorage {
     return rows.map((row) => mapOutcomeRow(row));
   }
 
+  listSessionCheckpoints(projectId?: string): SessionCheckpoint[] {
+    const rows = projectId
+      ? (this.db
+          .prepare("SELECT * FROM session_checkpoints WHERE project_id = ? ORDER BY created_at ASC")
+          .all(projectId) as SessionCheckpointRow[])
+      : (this.db.prepare("SELECT * FROM session_checkpoints ORDER BY created_at ASC").all() as SessionCheckpointRow[]);
+
+    return rows.map((row) => mapSessionCheckpointRow(row));
+  }
+
+  getLatestSessionCheckpoint(
+    projectId: string,
+    workspaceId?: string,
+    status?: SessionCheckpointStatus
+  ): SessionCheckpoint | undefined {
+    const workspacePredicate = workspaceId
+      ? "AND workspace_id = @workspace_id"
+      : "";
+    const statusPredicate = status ? "AND status = @status" : "";
+    const stmt = this.db.prepare(`
+      SELECT * FROM session_checkpoints
+      WHERE project_id = @project_id
+        ${workspacePredicate}
+        ${statusPredicate}
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    const row = stmt.get({
+      project_id: projectId,
+      workspace_id: workspaceId ?? null,
+      status: status ?? null,
+    }) as SessionCheckpointRow | undefined;
+    if (row) return mapSessionCheckpointRow(row);
+
+    if (workspaceId) {
+      const fallback = this.db.prepare(`
+        SELECT * FROM session_checkpoints
+        WHERE project_id = @project_id
+          ${statusPredicate}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `).get({
+        project_id: projectId,
+        status: status ?? null,
+      }) as SessionCheckpointRow | undefined;
+      if (fallback) return mapSessionCheckpointRow(fallback);
+    }
+
+    return undefined;
+  }
+
   getClaimById(claimId: string): Claim | undefined {
     const row = this.db.prepare("SELECT * FROM claims WHERE id = ?").get(claimId) as ClaimRow | undefined;
     if (!row) return undefined;
     return mapClaimRow(row);
+  }
+
+  touchClaims(projectId: string, claimIds: string[], activatedAt: string): number {
+    const uniqueClaimIds = Array.from(new Set(claimIds.filter(Boolean)));
+    if (uniqueClaimIds.length === 0) return 0;
+
+    const placeholders = uniqueClaimIds.map(() => "?").join(", ");
+    const stmt = this.db.prepare(`
+      UPDATE claims
+      SET last_activated_at = ?
+      WHERE project_id = ?
+        AND id IN (${placeholders})
+    `);
+
+    const result = stmt.run(activatedAt, projectId, ...uniqueClaimIds);
+    return result.changes;
   }
 
   findCompatibleActiveSingletonClaims(
@@ -540,6 +686,7 @@ export class RuntimeStorage {
       outcomes: count("claim_outcomes"),
       transitions: count("claim_transitions"),
       activationLogs: count("activation_logs"),
+      checkpoints: count("session_checkpoints"),
       migrationsApplied: count("schema_migrations"),
     };
   }
@@ -667,5 +814,31 @@ function mapActivationLogRow(row: ActivationLogRow): ActivationLog {
     activation_reasons: row.activation_reasons_json
       ? JSON.parse(row.activation_reasons_json)
       : undefined,
+  };
+}
+
+function mapSessionCheckpointRow(row: SessionCheckpointRow): SessionCheckpoint {
+  return {
+    id: row.id,
+    created_at: row.created_at,
+    project_id: row.project_id,
+    session_id: row.session_id,
+    workspace_id: row.workspace_id ?? undefined,
+    branch: row.branch ?? undefined,
+    repo_head: row.repo_head ?? undefined,
+    status: row.status as SessionCheckpoint["status"],
+    source: row.source as SessionCheckpoint["source"],
+    summary: row.summary,
+    current_goal: row.current_goal ?? undefined,
+    next_action: row.next_action ?? undefined,
+    blocking_reason: row.blocking_reason ?? undefined,
+    hot_claim_ids: JSON.parse(row.hot_claim_ids_json),
+    hot_files: JSON.parse(row.hot_files_json),
+    evidence_refs: JSON.parse(row.evidence_refs_json),
+    packet_hash: row.packet_hash,
+    hot_file_digests: row.hot_file_digests_json
+      ? JSON.parse(row.hot_file_digests_json)
+      : undefined,
+    stale_reason: row.stale_reason ?? undefined,
   };
 }

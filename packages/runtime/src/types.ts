@@ -22,6 +22,50 @@ export type EventType =
   | "session_end"
   | "user_confirmation";
 
+export const STABLE_OUTCOME_TYPES = [
+  "test_pass",
+  "test_fail",
+  "build_pass",
+  "build_fail",
+  "commit_kept",
+  "commit_reverted",
+  "issue_closed",
+  "issue_reopened",
+  "human_kept",
+  "human_corrected",
+  "manual_override",
+] as const;
+
+export type OutcomeType = (typeof STABLE_OUTCOME_TYPES)[number];
+
+export const POSITIVE_OUTCOME_TYPES = [
+  "test_pass",
+  "build_pass",
+  "commit_kept",
+  "issue_closed",
+  "human_kept",
+] as const satisfies readonly OutcomeType[];
+
+export const NEGATIVE_OUTCOME_TYPES = [
+  "test_fail",
+  "build_fail",
+  "commit_reverted",
+  "issue_reopened",
+  "human_corrected",
+  "manual_override",
+] as const satisfies readonly OutcomeType[];
+
+export const SESSION_CHECKPOINT_STATUSES = ["active", "stale"] as const;
+export type SessionCheckpointStatus = (typeof SESSION_CHECKPOINT_STATUSES)[number];
+
+export const SESSION_CHECKPOINT_SOURCES = [
+  "precompact",
+  "session_end",
+  "postcompact",
+  "stop_failure",
+] as const;
+export type SessionCheckpointSource = (typeof SESSION_CHECKPOINT_SOURCES)[number];
+
 export interface EventScope {
   repo?: string;
   branch?: string;
@@ -145,22 +189,6 @@ export interface Claim {
   resolution_rules?: ResolutionRule[];
 }
 
-export type OutcomeType =
-  | "test_pass"
-  | "test_fail"
-  | "build_pass"
-  | "build_fail"
-  | "commit_kept"
-  | "commit_reverted"
-  | "issue_closed"
-  | "issue_reopened"
-  | "human_kept"
-  | "human_corrected"
-  | "manual_override"
-  | "human_approved"
-  | "human_rejected"
-  | "claim_superseded";
-
 export interface Outcome {
   id: string;
   ts: string;
@@ -214,6 +242,48 @@ export interface OutcomeSummary {
   last_outcome_at?: string;
 }
 
+export interface SessionCheckpoint {
+  id: string;
+  created_at: string;
+  project_id: string;
+  session_id: string;
+  workspace_id?: string;
+  branch?: string;
+  repo_head?: string;
+  status: SessionCheckpointStatus;
+  source: SessionCheckpointSource;
+  summary: string;
+  current_goal?: string;
+  next_action?: string;
+  blocking_reason?: string;
+  hot_claim_ids: string[];
+  hot_files: string[];
+  evidence_refs: string[];
+  packet_hash: string;
+  hot_file_digests?: Record<string, string>;
+  stale_reason?: string;
+}
+
+export interface RecallCheckpoint {
+  id: string;
+  created_at: string;
+  project_id: string;
+  session_id: string;
+  workspace_id?: string;
+  branch?: string;
+  repo_head?: string;
+  status: SessionCheckpointStatus;
+  source: SessionCheckpointSource;
+  summary: string;
+  current_goal?: string;
+  next_action?: string;
+  blocking_reason?: string;
+  hot_claim_ids: string[];
+  hot_files: string[];
+  evidence_refs: string[];
+  stale_reason?: string;
+}
+
 export interface RecallClaim extends Claim {
   recall_rank: number;
   activation_reasons: string[];
@@ -226,6 +296,7 @@ export interface RecallPacket {
   generated_at: string;
   agent_id: string;
   brief: string;
+  checkpoint?: RecallCheckpoint;
   active_claims: RecallClaim[];
   open_threads: RecallClaim[];
   recent_evidence_refs: string[];
@@ -239,6 +310,7 @@ export interface SessionBriefInput {
   agent_id: string;
   scope?: ClaimScope;
   debug?: boolean;
+  cwd?: string;
 }
 
 export interface ProjectSnapshotInput {
@@ -246,6 +318,8 @@ export interface ProjectSnapshotInput {
   agent_id: string;
   scope?: ClaimScope;
   debug?: boolean;
+  workspace_id?: string;
+  cwd?: string;
 }
 
 export interface SearchClaimsInput {
@@ -273,12 +347,14 @@ export interface RuntimeStats {
   outcomes: number;
   transitions: number;
   activationLogs: number;
+  checkpoints: number;
   migrationsApplied: number;
 }
 
 export interface RuntimeAdminApi {
   insertClaimRecord(claim: Claim): void;
   insertOutcomeRecord(outcome: Outcome): void;
+  insertSessionCheckpointRecord(checkpoint: SessionCheckpoint): void;
 }
 
 export interface VerifyClaimInput {
@@ -310,4 +386,34 @@ export interface ExplainClaimResult {
   activation_logs: ActivationLog[];
   related_outcomes: Outcome[];
   outcome_timeline: OutcomeTimelineEntry[];
+}
+
+export interface RecordSessionCheckpointInput {
+  project_id: string;
+  session_id: string;
+  workspace_id?: string;
+  agent_id: string;
+  scope?: ClaimScope;
+  cwd?: string;
+  source: SessionCheckpointSource;
+  summary_hint?: string;
+  blocking_hint?: string;
+}
+
+export interface GetLatestCheckpointInput {
+  project_id: string;
+  workspace_id?: string;
+  status?: SessionCheckpointStatus;
+}
+
+export interface VerifyCheckpointForSessionStartInput {
+  project_id: string;
+  workspace_id?: string;
+  branch?: string;
+  cwd?: string;
+}
+
+export interface VerifyCheckpointForSessionStartResult {
+  checkpoint?: RecallCheckpoint;
+  warnings: string[];
 }

@@ -428,6 +428,222 @@ test("executeClaudeHookEnvelope: Setup maintenance runs sweepStaleClaims", async
   assert.equal(typeof result.staleClaimed, "number", "should return stale claim count");
 });
 
+test("executeClaudeHookEnvelope records checkpoints for PreCompact and SessionEnd", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-exec-checkpoints-lifecycle-"));
+  const worktreeDir = path.join(tempDir, "workspace");
+  fs.mkdirSync(path.join(worktreeDir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(worktreeDir, "src", "auth.ts"), "export const authMode = 'sqlite';\n");
+
+  const mod = await import("../dist/hook-envelope.js");
+  const adapterModule = await import("../dist/index.js");
+
+  const seedRuntime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  seedRuntime.getAdminApi().insertClaimRecord({
+    id: "clm-thread-checkpoint",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "thread",
+    assertion_kind: "todo",
+    canonical_key: "thread.issue.42",
+    cardinality: "singleton",
+    content: "Refactor auth module",
+    source_event_ids: ["evt-thread-checkpoint"],
+    confidence: 0.9,
+    importance: 0.9,
+    outcome_score: 0,
+    verification_status: "user_confirmed",
+    status: "active",
+    thread_status: "open",
+    scope: {
+      branch: "main",
+      cwd_prefix: worktreeDir,
+      files: [path.join(worktreeDir, "src", "auth.ts")],
+    },
+  });
+  seedRuntime.close();
+
+  mod.executeClaudeHookEnvelope(
+    {
+      hook_event_name: "PreCompact",
+      session_id: "s-checkpoint-1",
+      cwd: worktreeDir,
+      model: "claude-sonnet-4.6",
+    },
+    { dataDir: tempDir, ...PARSE_OPTIONS }
+  );
+
+  mod.executeClaudeHookEnvelope(
+    {
+      hook_event_name: "SessionEnd",
+      session_id: "s-checkpoint-1",
+      cwd: worktreeDir,
+      reason: "Finished auth cleanup",
+      model: "claude-sonnet-4.6",
+    },
+    { dataDir: tempDir, ...PARSE_OPTIONS }
+  );
+
+  const verifyRuntime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const checkpoints = verifyRuntime.listSessionCheckpoints("github.com/acme/demo");
+  assert.ok(checkpoints.some((checkpoint) => checkpoint.source === "precompact"));
+  assert.ok(checkpoints.some((checkpoint) => checkpoint.source === "session_end"));
+  verifyRuntime.close();
+});
+
+test("executeClaudeHookEnvelope records checkpoints for PostCompact and StopFailure", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-exec-checkpoints-errors-"));
+  const worktreeDir = path.join(tempDir, "workspace");
+  fs.mkdirSync(path.join(worktreeDir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(worktreeDir, "src", "auth.ts"), "export const authMode = 'sqlite';\n");
+
+  const mod = await import("../dist/hook-envelope.js");
+  const adapterModule = await import("../dist/index.js");
+
+  const seedRuntime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  seedRuntime.getAdminApi().insertClaimRecord({
+    id: "clm-thread-checkpoint-2",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "thread",
+    assertion_kind: "todo",
+    canonical_key: "thread.issue.43",
+    cardinality: "singleton",
+    content: "Fix compacted auth flow",
+    source_event_ids: ["evt-thread-checkpoint-2"],
+    confidence: 0.9,
+    importance: 0.9,
+    outcome_score: 0,
+    verification_status: "user_confirmed",
+    status: "active",
+    thread_status: "open",
+    scope: {
+      branch: "main",
+      cwd_prefix: worktreeDir,
+      files: [path.join(worktreeDir, "src", "auth.ts")],
+    },
+  });
+  seedRuntime.close();
+
+  mod.executeClaudeHookEnvelope(
+    {
+      hook_event_name: "PostCompact",
+      session_id: "s-checkpoint-2",
+      cwd: worktreeDir,
+      compact_summary: "Compacted around auth work",
+      trigger: "manual",
+      model: "claude-sonnet-4.6",
+    },
+    { dataDir: tempDir, ...PARSE_OPTIONS }
+  );
+
+  mod.executeClaudeHookEnvelope(
+    {
+      hook_event_name: "StopFailure",
+      session_id: "s-checkpoint-2",
+      cwd: worktreeDir,
+      error: "API timeout",
+      error_details: "Timed out during auth refactor",
+      last_assistant_message: "Refactoring auth module",
+      model: "claude-sonnet-4.6",
+    },
+    { dataDir: tempDir, ...PARSE_OPTIONS }
+  );
+
+  const verifyRuntime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const checkpoints = verifyRuntime.listSessionCheckpoints("github.com/acme/demo");
+  assert.ok(checkpoints.some((checkpoint) => checkpoint.source === "postcompact"));
+  assert.ok(checkpoints.some((checkpoint) => checkpoint.source === "stop_failure"));
+  verifyRuntime.close();
+});
+
+test("executeClaudeHookEnvelope no-ops in global mode outside git repositories", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-exec-global-nongit-"));
+  const claudeHome = path.join(tempDir, "claude-home");
+  const nonGitDir = path.join(tempDir, "scratch");
+  fs.mkdirSync(nonGitDir, { recursive: true });
+
+  const previousClaudeHome = process.env.PMR_CLAUDE_HOME;
+  process.env.PMR_CLAUDE_HOME = claudeHome;
+
+  try {
+    const mod = await import("../dist/hook-envelope.js");
+    const adapterModule = await import("../dist/index.js");
+    adapterModule.writeGlobalInstallConfig(adapterModule.defaultGlobalInstallConfig());
+
+    const result = mod.executeClaudeHookEnvelope(
+      {
+        hook_event_name: "SessionStart",
+        session_id: "session-nongit",
+        cwd: nonGitDir,
+        model: "claude-sonnet-4.6",
+      },
+      {}
+    );
+
+    assert.deepEqual(result.events, []);
+    assert.equal(result.injection, undefined);
+    assert.equal(result.additionalContext, undefined);
+  } finally {
+    if (previousClaudeHome === undefined) {
+      delete process.env.PMR_CLAUDE_HOME;
+    } else {
+      process.env.PMR_CLAUDE_HOME = previousClaudeHome;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("executeClaudeHookEnvelope routes new git repos to shared global storage", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-exec-global-shared-"));
+  const claudeHome = path.join(tempDir, "claude-home");
+  const repoPath = path.join(tempDir, "repo");
+  fs.mkdirSync(repoPath, { recursive: true });
+  runGit(repoPath, ["init", "-b", "main"]);
+  runGit(repoPath, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+
+  const previousClaudeHome = process.env.PMR_CLAUDE_HOME;
+  process.env.PMR_CLAUDE_HOME = claudeHome;
+
+  try {
+    const mod = await import("../dist/hook-envelope.js");
+    const adapterModule = await import("../dist/index.js");
+    const config = adapterModule.defaultGlobalInstallConfig();
+    adapterModule.writeGlobalInstallConfig(config);
+
+    const result = mod.executeClaudeHookEnvelope(
+      {
+        hook_event_name: "PostToolUseFailure",
+        session_id: "session-global-shared",
+        cwd: repoPath,
+        tool_name: "Bash",
+        tool_input: { command: "pnpm test", cwd: repoPath },
+        error: "Test failed: database migration test",
+        model: "claude-sonnet-4.6",
+      },
+      {}
+    );
+
+    assert.equal(result.events.length, 1);
+    assert.ok(fs.existsSync(config.db_path), "shared global runtime DB should be created");
+    assert.ok(!fs.existsSync(path.join(repoPath, ".memory", "runtime.sqlite")), "repo-local runtime DB should not be created");
+
+    const runtime = adapterModule.createClaudeCodeRuntime({
+      dataDir: config.data_dir,
+      dbPath: config.db_path,
+    });
+    const claims = runtime.listClaims("github.com/acme/demo");
+    assert.ok(claims.some((claim) => claim.canonical_key === "thread.test.database.migration.test"));
+    runtime.close();
+  } finally {
+    if (previousClaudeHome === undefined) {
+      delete process.env.PMR_CLAUDE_HOME;
+    } else {
+      process.env.PMR_CLAUDE_HOME = previousClaudeHome;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 // ─── CLI E2E tests for new hooks ────────────────────────────────────────
 
 test("CLI: UserPromptSubmit returns additionalContext when claims exist", async () => {

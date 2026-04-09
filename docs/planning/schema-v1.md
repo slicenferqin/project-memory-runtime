@@ -17,11 +17,12 @@
 
 ## 2. 核心对象
 
-V1 定义五个核心对象：
+V1 当前实现定义六个核心对象：
 
 - `NormalizedEvent`
 - `Claim`
 - `Outcome`
+- `SessionCheckpoint`
 - `RecallPacket`
 - `ActivationLog`
 
@@ -151,6 +152,7 @@ type EventCapturePath =
   touched_files?: string[]
   stdout_digest?: string
   stderr_digest?: string
+  artifact_ref?: string
 }
 ```
 

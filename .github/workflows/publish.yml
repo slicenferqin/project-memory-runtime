@@ -37,13 +37,13 @@ jobs:
       - name: Test
         run: pnpm test
 
-      - name: Publish @slicenferqin/project-memory-runtime-core
-        run: pnpm --filter @slicenferqin/project-memory-runtime-core publish --no-git-checks --access public
+      - name: Publish @slicenfer/project-memory-runtime-core
+        run: pnpm --filter @slicenfer/project-memory-runtime-core publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @slicenferqin/project-memory-adapter-claude-code
-        run: pnpm --filter @slicenferqin/project-memory-adapter-claude-code publish --no-git-checks --access public
+      - name: Publish @slicenfer/project-memory-adapter-claude-code
+        run: pnpm --filter @slicenfer/project-memory-adapter-claude-code publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

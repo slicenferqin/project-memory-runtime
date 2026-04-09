@@ -7,14 +7,23 @@ import { execFileSync, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const CLI_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "cli.js");
+const ADAPTER_HOOK_ENVELOPE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../adapters/claude-code/dist/hook-envelope.js"
+);
+const RUNTIME_ENTRY_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../runtime/dist/index.js"
+);
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "pmr-cli-init-"));
 }
 
-function runCli(args, cwd) {
+function runCli(args, cwd, env = {}) {
   return execFileSync("node", [CLI_PATH, ...args], {
     cwd,
+    env: { ...process.env, ...env },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 15000,
@@ -73,6 +82,35 @@ test("pmr init creates database, hooks, and skill in a fresh git repo", () => {
   }
 });
 
+test("pmr install-global writes user-level config, hooks, and skill", () => {
+  const tmp = makeTempDir();
+  const claudeHome = path.join(tmp, "claude-home");
+  const env = { PMR_CLAUDE_HOME: claudeHome };
+
+  try {
+    const output = runCli(["install-global"], tmp, env);
+    assert.ok(output.includes("Hooks"), "output should mention Hooks");
+    assert.ok(output.includes("Config"), "output should mention Config");
+
+    const configPath = path.join(claudeHome, "project-memory-runtime", "config.json");
+    const settingsPath = path.join(claudeHome, "settings.local.json");
+    const skillPath = path.join(claudeHome, "skills", "project-memory", "SKILL.md");
+
+    assert.ok(fs.existsSync(configPath), "global config should exist");
+    assert.ok(fs.existsSync(settingsPath), "global settings.local.json should exist");
+    assert.ok(fs.existsSync(skillPath), "global skill should exist");
+
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    assert.equal(config.mode, "global");
+
+    const validateOutput = runCli(["validate-global"], tmp, env);
+    assert.ok(validateOutput.includes("Hooks: ok"), "global validation should pass hooks");
+    assert.ok(validateOutput.includes("Skill: ok"), "global validation should pass skill");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("pmr init is idempotent (running twice does not break)", () => {
   const tmp = makeTempDir();
   try {
@@ -102,6 +140,32 @@ test("pmr init is idempotent (running twice does not break)", () => {
   }
 });
 
+test("pmr uninstall-global removes user-level hooks, config, and skill but keeps shared data", () => {
+  const tmp = makeTempDir();
+  const claudeHome = path.join(tmp, "claude-home");
+  const env = { PMR_CLAUDE_HOME: claudeHome };
+
+  try {
+    runCli(["install-global"], tmp, env);
+
+    const sharedDbPath = path.join(claudeHome, "project-memory-runtime", "data", "runtime.sqlite");
+    assert.ok(fs.existsSync(sharedDbPath), "shared runtime DB should exist after install");
+
+    const output = runCli(["uninstall-global"], tmp, env);
+    assert.ok(output.includes("Config removed"), "output should mention config removal");
+
+    assert.ok(!fs.existsSync(path.join(claudeHome, "project-memory-runtime", "config.json")));
+    assert.ok(!fs.existsSync(path.join(claudeHome, "skills", "project-memory")));
+    assert.ok(fs.existsSync(sharedDbPath), "shared runtime DB should be kept on uninstall");
+
+    const settings = JSON.parse(fs.readFileSync(path.join(claudeHome, "settings.local.json"), "utf8"));
+    const settingsRaw = JSON.stringify(settings);
+    assert.ok(!settingsRaw.includes("project-memory-runtime-managed-claude-hook"));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("pmr status works on initialized project", () => {
   const tmp = makeTempDir();
   try {
@@ -112,6 +176,54 @@ test("pmr status works on initialized project", () => {
     assert.ok(output.includes("Project Memory Status"), "should show status header");
     assert.ok(output.includes("Events:"), "should show events count");
     assert.ok(output.includes("Claims:"), "should show claims count");
+    assert.ok(output.includes("Checkpoints:"), "should show checkpoint count");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("pmr status uses the shared global database for new git repos after install-global", () => {
+  const tmp = makeTempDir();
+  const repo = path.join(tmp, "repo");
+  const claudeHome = path.join(tmp, "claude-home");
+  const env = { PMR_CLAUDE_HOME: claudeHome };
+
+  try {
+    fs.mkdirSync(repo, { recursive: true });
+    initGitRepo(repo);
+    execSync("git remote add origin https://github.com/acme/demo.git", {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+
+    runCli(["install-global"], repo, env);
+
+    const script = `
+      import { executeClaudeHookEnvelope } from "${ADAPTER_HOOK_ENVELOPE_PATH.replace(/\\/g, "/")}";
+      executeClaudeHookEnvelope({
+        hook_event_name: "PostToolUseFailure",
+        session_id: "session-global-status",
+        cwd: "${repo.replace(/\\/g, "/")}",
+        tool_name: "Bash",
+        tool_input: { command: "pnpm test", cwd: "${repo.replace(/\\/g, "/")}" },
+        error: "Test failed: database migration test",
+        model: "claude-sonnet-4.6"
+      }, {});
+    `;
+    execFileSync("node", ["--input-type=module", "-e", script], {
+      cwd: repo,
+      env: { ...process.env, ...env },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
+    });
+
+    const output = runCli(["status"], repo, env);
+    const sharedDbPath = path.join(claudeHome, "project-memory-runtime", "data", "runtime.sqlite");
+    assert.ok(output.includes(sharedDbPath), "status should resolve to shared global DB");
+    assert.ok(output.includes("Claims:"), "status should show shared DB stats");
+    assert.ok(!fs.existsSync(path.join(repo, ".memory", "runtime.sqlite")), "new repo should not create local .memory DB");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -125,6 +237,137 @@ test("pmr snapshot works on empty initialized project", () => {
 
     const output = runCli(["snapshot", "--data-dir", path.join(tmp, ".memory")], tmp);
     assert.ok(output.includes("Project Memory Snapshot"), "should show snapshot header");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("pmr prefers legacy local .memory data over global shared storage", () => {
+  const tmp = makeTempDir();
+  const repo = path.join(tmp, "repo");
+  const claudeHome = path.join(tmp, "claude-home");
+  const env = { PMR_CLAUDE_HOME: claudeHome };
+
+  try {
+    fs.mkdirSync(repo, { recursive: true });
+    initGitRepo(repo);
+    execSync("git remote add origin https://github.com/acme/demo.git", {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+    runCli(["install-global"], repo, env);
+
+    const legacyScript = `
+      import { ProjectMemoryRuntime } from "${RUNTIME_ENTRY_PATH.replace(/\\/g, "/")}";
+      const rt = new ProjectMemoryRuntime({ dataDir: "${path.join(repo, ".memory").replace(/\\/g, "/")}" });
+      rt.initialize();
+      rt.getAdminApi().insertClaimRecord({
+        id: "clm-legacy-local",
+        created_at: "2026-03-12T00:00:00.000Z",
+        project_id: "github.com/acme/demo",
+        type: "decision",
+        assertion_kind: "instruction",
+        canonical_key: "decision.legacy.local",
+        cardinality: "singleton",
+        content: "Use legacy local runtime storage",
+        source_event_ids: ["evt-legacy-local"],
+        confidence: 0.9,
+        importance: 0.8,
+        outcome_score: 0,
+        verification_status: "user_confirmed",
+        status: "active"
+      });
+      rt.close();
+    `;
+    execFileSync("node", ["--input-type=module", "-e", legacyScript], {
+      cwd: repo,
+      env: { ...process.env, ...env },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
+    });
+
+    const output = runCli(["search", "legacy", "--project-id", "github.com/acme/demo"], repo, env);
+    assert.ok(output.includes("decision.legacy.local"), "search should read from local legacy DB");
+    assert.ok(output.includes(path.join(repo, ".memory", "runtime.sqlite")) || fs.existsSync(path.join(repo, ".memory", "runtime.sqlite")));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("pmr honors repo-local disabled and local override config in global mode", () => {
+  const tmp = makeTempDir();
+  const repoDisabled = path.join(tmp, "repo-disabled");
+  const repoLocal = path.join(tmp, "repo-local");
+  const claudeHome = path.join(tmp, "claude-home");
+  const env = { PMR_CLAUDE_HOME: claudeHome };
+
+  try {
+    fs.mkdirSync(repoDisabled, { recursive: true });
+    initGitRepo(repoDisabled);
+    execSync("git remote add origin https://github.com/acme/disabled.git", {
+      cwd: repoDisabled,
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+
+    fs.mkdirSync(path.join(repoDisabled, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDisabled, ".claude", "project-memory.json"),
+      `${JSON.stringify({ mode: "disabled" }, null, 2)}\n`
+    );
+
+    runCli(["install-global"], repoDisabled, env);
+    const disabledOutput = runCli(["status"], repoDisabled, env);
+    assert.ok(disabledOutput.includes("Project Memory unavailable"), "disabled repo should skip project memory");
+
+    fs.mkdirSync(repoLocal, { recursive: true });
+    initGitRepo(repoLocal);
+    execSync("git remote add origin https://github.com/acme/local.git", {
+      cwd: repoLocal,
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+    fs.mkdirSync(path.join(repoLocal, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoLocal, ".claude", "project-memory.json"),
+      `${JSON.stringify({ mode: "local", data_dir: ".pmr-local" }, null, 2)}\n`
+    );
+
+    const overrideScript = `
+      import { ProjectMemoryRuntime } from "${RUNTIME_ENTRY_PATH.replace(/\\/g, "/")}";
+      const rt = new ProjectMemoryRuntime({ dataDir: "${path.join(repoLocal, ".pmr-local").replace(/\\/g, "/")}" });
+      rt.initialize();
+      rt.getAdminApi().insertClaimRecord({
+        id: "clm-local-override",
+        created_at: "2026-03-12T00:00:00.000Z",
+        project_id: "github.com/acme/local",
+        type: "decision",
+        assertion_kind: "instruction",
+        canonical_key: "decision.local.override",
+        cardinality: "singleton",
+        content: "Use repo-local override storage",
+        source_event_ids: ["evt-local-override"],
+        confidence: 0.9,
+        importance: 0.8,
+        outcome_score: 0,
+        verification_status: "user_confirmed",
+        status: "active"
+      });
+      rt.close();
+    `;
+    execFileSync("node", ["--input-type=module", "-e", overrideScript], {
+      cwd: repoLocal,
+      env: { ...process.env, ...env },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
+    });
+
+    const localOutput = runCli(["search", "override", "--project-id", "github.com/acme/local"], repoLocal, env);
+    assert.ok(localOutput.includes("decision.local.override"), "local override repo should use configured local DB");
+    assert.ok(fs.existsSync(path.join(repoLocal, ".pmr-local", "runtime.sqlite")));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -172,12 +415,81 @@ test("pmr search returns results after recording events", () => {
   }
 });
 
+test("pmr snapshot surfaces the latest continuation checkpoint", () => {
+  const tmp = makeTempDir();
+  try {
+    initGitRepo(tmp);
+    runCli(["init"], tmp);
+
+    const adapterPath = path.resolve(import.meta.dirname, "../../adapters/claude-code/dist/index.js");
+    const dataDir = path.join(tmp, ".memory").replace(/\\/g, "/");
+    const hotFile = path.join(tmp, "src", "auth.ts");
+    fs.mkdirSync(path.dirname(hotFile), { recursive: true });
+    fs.writeFileSync(hotFile, "export const authMode = 'sqlite';\n");
+
+    const setupScript = `
+      import { createClaudeCodeRuntime } from "${adapterPath.replace(/\\/g, "/")}";
+      const rt = createClaudeCodeRuntime({ dataDir: "${dataDir}" });
+      rt.initialize();
+      rt.getAdminApi().insertClaimRecord({
+        id: "clm-thread-cli",
+        created_at: "2026-03-12T00:00:00.000Z",
+        project_id: "github.com/acme/demo",
+        type: "thread",
+        assertion_kind: "todo",
+        canonical_key: "thread.issue.42",
+        cardinality: "singleton",
+        content: "Refactor auth module",
+        source_event_ids: ["evt-thread-cli"],
+        confidence: 0.9,
+        importance: 0.9,
+        outcome_score: 0,
+        verification_status: "user_confirmed",
+        status: "active",
+        thread_status: "open",
+        scope: {
+          branch: "main",
+          cwd_prefix: "${tmp.replace(/\\/g, "/")}",
+          files: ["${hotFile.replace(/\\/g, "/")}"],
+        },
+      });
+      rt.recordSessionCheckpoint({
+        project_id: "github.com/acme/demo",
+        session_id: "session-cli-checkpoint",
+        workspace_id: "ws-cli",
+        agent_id: "claude-code",
+        source: "session_end",
+        cwd: "${tmp.replace(/\\/g, "/")}",
+        scope: {
+          branch: "main",
+          cwd_prefix: "${tmp.replace(/\\/g, "/")}",
+        },
+        summary_hint: "Checkpoint after CLI auth work",
+      });
+      rt.close();
+    `;
+    execFileSync("node", ["--input-type=module", "-e", setupScript], {
+      cwd: tmp,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 10000,
+    });
+
+    const output = runCli(["snapshot", "--data-dir", path.join(tmp, ".memory"), "--project-id", "github.com/acme/demo"], tmp);
+    assert.ok(output.includes("Continuation Checkpoint:"), "snapshot should show checkpoint section");
+    assert.ok(output.includes("Checkpoint after CLI auth work"), "snapshot should include checkpoint summary");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("pmr --help shows usage information", () => {
   const tmp = makeTempDir();
   try {
     const output = runCli(["--help"], tmp);
     assert.ok(output.includes("Project Memory Runtime"), "should show title");
     assert.ok(output.includes("init"), "should mention init command");
+    assert.ok(output.includes("install-global"), "should mention install-global command");
     assert.ok(output.includes("search"), "should mention search command");
     assert.ok(output.includes("explain"), "should mention explain command");
     assert.ok(output.includes("snapshot"), "should mention snapshot command");

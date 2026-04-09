@@ -11,6 +11,7 @@ const MIGRATION_FILES = [
   "003_event_provenance.sql",
   "004_event_capture_path.sql",
   "005_activation_indices.sql",
+  "006_session_checkpoints.sql",
 ];
 
 export function loadSqlMigrations(): SqlMigration[] {

@@ -1,15 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { ProjectMemoryRuntime } from "@slicenferqin/project-memory-runtime-core";
+import { ProjectMemoryRuntime } from "@slicenfer/project-memory-runtime-core";
 import {
   defaultClaudeProjectId,
   installClaudeHookSettings,
   validateClaudeHookSettings,
-} from "@slicenferqin/project-memory-adapter-claude-code";
+} from "@slicenfer/project-memory-adapter-claude-code";
 import type { CliOptions } from "../shared.js";
+import { installProjectMemorySkill } from "../global.js";
 
 function runGit(cwd: string, args: string[]): string | undefined {
   try {
@@ -51,52 +51,7 @@ function resolveHookCommand(projectDir: string): string {
   }
 
   // Strategy 4: Fallback to npx (will download if needed)
-  return `npx --yes @slicenferqin/project-memory-adapter-claude-code`;
-}
-
-function installSkill(projectDir: string): string {
-  const skillDir = path.join(projectDir, ".claude", "skills", "project-memory");
-  const skillFile = path.join(skillDir, "SKILL.md");
-
-  // Read skill template from our assets
-  const assetSkill = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "assets", "SKILL.md");
-  let content: string;
-
-  if (fs.existsSync(assetSkill)) {
-    content = fs.readFileSync(assetSkill, "utf8");
-  } else {
-    // Inline fallback if assets not available
-    content = [
-      "---",
-      "name: project-memory",
-      "autoApply: always",
-      "---",
-      "# Project Memory — Evidence-backed recall",
-      "",
-      "Your project has a memory system that tracks verified decisions, facts,",
-      "and open threads. Memory is captured automatically from your tool use.",
-      "",
-      "## Auto-injection",
-      "Session brief is injected automatically at session start via hooks.",
-      "",
-      "## Mid-session retrieval",
-      "When you need to recall project decisions or check evidence, use Bash:",
-      '- `pmr search "<query>"` — find relevant decisions, facts, threads',
-      "- `pmr explain <claim-id>` — trace a claim to its evidence and outcomes",
-      "- `pmr snapshot` — full project memory overview",
-      "- `pmr status` — memory database statistics",
-      "",
-      "## When to use",
-      '- User asks "why did we decide X?" → `pmr search "X"`',
-      "- User questions a past decision → `pmr explain <id>` to show evidence",
-      "- Starting complex work → `pmr snapshot` for full context",
-      '- Debugging a failure → `pmr search --type thread` for open issues',
-    ].join("\n");
-  }
-
-  fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(skillFile, content);
-  return skillFile;
+  return `npx --yes @slicenfer/project-memory-adapter-claude-code`;
 }
 
 export async function runInit(options: CliOptions): Promise<void> {
@@ -156,6 +111,7 @@ export async function runInit(options: CliOptions): Promise<void> {
       settings_file: settingsFile,
       command: hookCommand,
       dataDir,
+      target: "local",
     });
     const hookCount = Object.keys(result.settings.hooks ?? {}).length;
     steps.push({ label: "Hooks", detail: `${hookCount} lifecycle hooks installed` });
@@ -166,7 +122,7 @@ export async function runInit(options: CliOptions): Promise<void> {
 
   // Step 5: Install Skill file
   try {
-    installSkill(projectDir);
+    installProjectMemorySkill(path.join(projectDir, ".claude", "skills"), "local");
     steps.push({ label: "Skill", detail: `project-memory retrieval skill installed` });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
@@ -176,7 +132,7 @@ export async function runInit(options: CliOptions): Promise<void> {
   // Step 6: Validate
   try {
     const settingsFile = path.join(projectDir, ".claude", "settings.local.json");
-    const validation = validateClaudeHookSettings({ settings_file: settingsFile });
+    const validation = validateClaudeHookSettings({ settings_file: settingsFile, target: "local" });
     if (validation.is_valid) {
       steps.push({ label: "Validation", detail: "all checks passed" });
     } else {

@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import type { OutcomeType } from "./types.js";
+import {
+  NEGATIVE_OUTCOME_TYPES as NEGATIVE_OUTCOME_TYPE_VALUES,
+  POSITIVE_OUTCOME_TYPES as POSITIVE_OUTCOME_TYPE_VALUES,
+  type OutcomeType,
+} from "./types.js";
 
 /** Returns the current timestamp in ISO 8601 format. */
 export function nowIso(): string {
@@ -32,22 +36,10 @@ export function hashId(...parts: string[]): string {
 
 /** Canonical set of positive outcome types. Single source of truth. */
 export const POSITIVE_OUTCOME_TYPES: ReadonlySet<OutcomeType> = new Set<OutcomeType>([
-  "test_pass",
-  "build_pass",
-  "commit_kept",
-  "issue_closed",
-  "human_kept",
-  "human_approved",
+  ...POSITIVE_OUTCOME_TYPE_VALUES,
 ]);
 
 /** Canonical set of negative outcome types. Single source of truth. */
 export const NEGATIVE_OUTCOME_TYPES: ReadonlySet<OutcomeType> = new Set<OutcomeType>([
-  "test_fail",
-  "build_fail",
-  "commit_reverted",
-  "issue_reopened",
-  "human_corrected",
-  "manual_override",
-  "human_rejected",
-  "claim_superseded",
+  ...NEGATIVE_OUTCOME_TYPE_VALUES,
 ]);

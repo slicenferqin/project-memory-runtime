@@ -7,24 +7,39 @@ import type {
   ClaimTransition,
   EventCapturePath,
   ExplainClaimResult,
+  GetLatestCheckpointInput,
   MarkClaimStaleInput,
   NormalizedEvent,
   Outcome,
   OutcomeTimelineEntry,
   OutcomeType,
   ProjectSnapshotInput,
+  RecallCheckpoint,
   RecallPacket,
+  RecordSessionCheckpointInput,
   RuntimeConfig,
   RuntimeAdminApi,
   RuntimePaths,
   RuntimeStats,
   SearchClaimsInput,
+  SessionCheckpoint,
   SessionBriefInput,
+  VerifyCheckpointForSessionStartInput,
+  VerifyCheckpointForSessionStartResult,
   VerifyClaimInput,
 } from "./types.js";
 import { buildRecallPacket } from "./recall/packet.js";
 import { buildIngestionArtifacts } from "./ingestion/service.js";
 import { scopeSignature } from "./scope.js";
+import {
+  checkpointPacketHash,
+  computeCheckpointFileDigests,
+  currentBranch,
+  currentRepoHead,
+  normalizeCheckpointFilePath,
+  toRecallCheckpoint,
+  verifyCheckpointFileDigests,
+} from "./checkpoints.js";
 import {
   DEFAULT_ALLOWED_CAPTURE_PATHS,
   RuntimeInvariantError,
@@ -115,6 +130,10 @@ export class ProjectMemoryRuntime {
         this.storage.transact(() => {
           this.applyOutcome(outcome);
         });
+      },
+      insertSessionCheckpointRecord: (checkpoint) => {
+        this.initialize();
+        this.storage.insertSessionCheckpoint(checkpoint);
       },
     };
   }
@@ -220,6 +239,11 @@ export class ProjectMemoryRuntime {
     return this.storage.listActivationLogs(projectId);
   }
 
+  listSessionCheckpoints(projectId?: string): SessionCheckpoint[] {
+    this.initialize();
+    return this.storage.listSessionCheckpoints(projectId);
+  }
+
   getClaim(claimId: string): Claim | undefined {
     this.initialize();
     return this.storage.getClaimById(claimId);
@@ -227,67 +251,180 @@ export class ProjectMemoryRuntime {
 
   buildSessionBrief(input: SessionBriefInput): RecallPacket {
     this.initialize();
-    const claims = this.storage.listClaims(input.project_id);
-    const outcomes = this.storage.listOutcomes(input.project_id);
-    return buildRecallPacket(
-      {
-        projectId: input.project_id,
-        agentId: input.agent_id,
-        claims,
-        outcomes,
-        scope: input.scope,
-        debug: input.debug,
-        mode: "session_brief",
-      },
-      (log) => this.storage.insertActivationLog(log)
-    );
+    const packet = this.buildRawRecallPacket({
+      projectId: input.project_id,
+      agentId: input.agent_id,
+      scope: input.scope,
+      debug: input.debug,
+      mode: "session_brief",
+    });
+    const checkpointResult = this.verifyCheckpointForSessionStart({
+      project_id: input.project_id,
+      workspace_id: input.workspace_id,
+      branch: input.scope?.branch,
+      cwd: input.cwd,
+    });
+    return this.finalizeRecallPacket(input.project_id, packet, {
+      checkpoint: checkpointResult.checkpoint,
+      warnings: checkpointResult.warnings,
+    });
   }
 
   buildProjectSnapshot(input: ProjectSnapshotInput): RecallPacket {
     this.initialize();
-    const claims = this.storage.listClaims(input.project_id);
-    const outcomes = this.storage.listOutcomes(input.project_id);
-    return buildRecallPacket(
-      {
-        projectId: input.project_id,
-        agentId: input.agent_id,
-        claims,
-        outcomes,
-        scope: input.scope,
-        debug: input.debug,
-        mode: "project_snapshot",
-      },
-      (log) => this.storage.insertActivationLog(log)
-    );
+    const packet = this.buildRawRecallPacket({
+      projectId: input.project_id,
+      agentId: input.agent_id,
+      scope: input.scope,
+      debug: input.debug,
+      mode: "project_snapshot",
+    });
+    const checkpoint = this.resolveSnapshotCheckpoint({
+      project_id: input.project_id,
+      workspace_id: input.workspace_id,
+      branch: input.scope?.branch,
+      cwd: input.cwd,
+    });
+    return this.finalizeRecallPacket(input.project_id, packet, checkpoint);
   }
 
   searchClaims(input: SearchClaimsInput): RecallPacket {
     this.initialize();
-    const claims = this.storage.listClaims(input.project_id);
-    const outcomes = this.storage.listOutcomes(input.project_id);
-    const packet = buildRecallPacket(
-      {
-        projectId: input.project_id,
-        agentId: "memory.search",
-        claims,
-        outcomes,
-        scope: input.scope,
-        debug: input.debug,
-        query: input.query,
-        mode: "search",
-      },
-      (log) => this.storage.insertActivationLog(log)
-    );
+    const packet = this.buildRawRecallPacket({
+      projectId: input.project_id,
+      agentId: "memory.search",
+      scope: input.scope,
+      debug: input.debug,
+      query: input.query,
+      mode: "search",
+    });
 
     if (typeof input.limit === "number" && input.limit >= 0) {
-      return {
+      return this.finalizeRecallPacket(input.project_id, {
         ...packet,
         active_claims: packet.active_claims.slice(0, input.limit),
         open_threads: packet.open_threads.slice(0, input.limit),
-      };
+      });
     }
 
-    return packet;
+    return this.finalizeRecallPacket(input.project_id, packet);
+  }
+
+  touchActivatedClaims(projectId: string, claimIds: string[], activatedAt: string = nowIso()): number {
+    this.initialize();
+    return this.storage.touchClaims(projectId, claimIds, activatedAt);
+  }
+
+  getLatestCheckpoint(input: GetLatestCheckpointInput): SessionCheckpoint | undefined {
+    this.initialize();
+    return this.storage.getLatestSessionCheckpoint(
+      input.project_id,
+      input.workspace_id,
+      input.status
+    );
+  }
+
+  recordSessionCheckpoint(input: RecordSessionCheckpointInput): SessionCheckpoint {
+    this.initialize();
+    const branch = input.scope?.branch ?? currentBranch(input.cwd);
+
+    const packet = this.buildRawRecallPacket({
+      projectId: input.project_id,
+      agentId: input.agent_id,
+      scope: input.scope,
+      mode: "session_brief",
+    });
+
+    const fallbackClaims = this.selectCheckpointClaims(input.project_id, input.scope);
+    const packetClaims = [...packet.open_threads, ...packet.active_claims];
+    const hotClaims = (packetClaims.length > 0 ? packetClaims : fallbackClaims).slice(0, 5);
+    const hotFiles = Array.from(
+      new Set(
+        hotClaims.flatMap((claim) => claim.scope?.files ?? [])
+      )
+    ).map((filePath) => normalizeCheckpointFilePath(input.cwd, filePath));
+
+    const repoHead = currentRepoHead(input.cwd);
+    const summary = (input.summary_hint ?? "").trim() || packet.brief;
+    const currentGoal =
+      hotClaims.find((claim) => claim.type === "thread")?.content ??
+      hotClaims.find((claim) => claim.type === "decision")?.content ??
+      hotClaims[0]?.content;
+    const nextAction = hotClaims.find((claim) => claim.type === "thread")
+      ? `继续处理：${hotClaims.find((claim) => claim.type === "thread")?.content}`
+      : undefined;
+    const blockingReason =
+      (input.blocking_hint ?? "").trim() ||
+      packet.open_threads.find((thread) => (thread.outcome_summary?.negative_count ?? 0) > 0)?.content ||
+      fallbackClaims.find((claim) => claim.type === "thread" && claim.thread_status === "blocked")?.content ||
+      packet.warnings?.[0];
+    const packetHash = checkpointPacketHash({
+      summary,
+      currentGoal,
+      nextAction,
+      blockingReason,
+      hotClaimIds: hotClaims.map((claim) => claim.id),
+      hotFiles,
+      evidenceRefs: packet.recent_evidence_refs.length > 0
+        ? packet.recent_evidence_refs
+        : hotClaims.flatMap((claim) => claim.source_event_ids).slice(0, 10),
+      branch,
+      repoHead,
+    });
+
+    const checkpoint: SessionCheckpoint = {
+      id: hashId("chk", input.project_id, input.session_id, input.source, packetHash),
+      created_at: nowIso(),
+      project_id: input.project_id,
+      session_id: input.session_id,
+      workspace_id: input.workspace_id,
+      branch,
+      repo_head: repoHead,
+      status: "active",
+      source: input.source,
+      summary,
+      current_goal: currentGoal,
+      next_action: nextAction,
+      blocking_reason: blockingReason,
+      hot_claim_ids: hotClaims.map((claim) => claim.id),
+      hot_files: hotFiles,
+      evidence_refs: packet.recent_evidence_refs.length > 0
+        ? packet.recent_evidence_refs
+        : hotClaims.flatMap((claim) => claim.source_event_ids).slice(0, 10),
+      packet_hash: packetHash,
+      hot_file_digests: computeCheckpointFileDigests(input.cwd, hotFiles),
+    };
+
+    this.storage.upsertSessionCheckpoint(checkpoint);
+    return checkpoint;
+  }
+
+  verifyCheckpointForSessionStart(
+    input: VerifyCheckpointForSessionStartInput
+  ): VerifyCheckpointForSessionStartResult {
+    this.initialize();
+    const checkpoint = this.storage.getLatestSessionCheckpoint(
+      input.project_id,
+      input.workspace_id,
+      "active"
+    );
+    if (!checkpoint) {
+      return { warnings: [] };
+    }
+
+    const warnings: string[] = [];
+    const currentBranchName = input.branch ?? currentBranch(input.cwd);
+    const hideNextAction = this.updateCheckpointForCurrentWorkspace(
+      checkpoint,
+      currentBranchName,
+      input.cwd,
+      warnings
+    );
+
+    return {
+      checkpoint: toRecallCheckpoint(checkpoint, { hideNextAction }),
+      warnings,
+    };
   }
 
   sweepStaleClaims(referenceTime: string = nowIso()): number {
@@ -505,6 +642,165 @@ export class ProjectMemoryRuntime {
       related_outcomes: relatedOutcomes,
       outcome_timeline: timeline,
     };
+  }
+
+  private buildRawRecallPacket(input: {
+    projectId: string;
+    agentId: string;
+    scope?: SessionBriefInput["scope"];
+    debug?: boolean;
+    query?: string;
+    mode: "session_brief" | "project_snapshot" | "search";
+  }): RecallPacket {
+    const claims = this.storage.listClaims(input.projectId);
+    const outcomes = this.storage.listOutcomes(input.projectId);
+    return buildRecallPacket(
+      {
+        projectId: input.projectId,
+        agentId: input.agentId,
+        claims,
+        outcomes,
+        scope: input.scope,
+        debug: input.debug,
+        query: input.query,
+        mode: input.mode,
+      },
+      (log) => this.storage.insertActivationLog(log)
+    );
+  }
+
+  private finalizeRecallPacket(
+    projectId: string,
+    packet: RecallPacket,
+    extras: { checkpoint?: RecallCheckpoint; warnings?: string[] } = {}
+  ): RecallPacket {
+    const activationTs = packet.generated_at;
+    const activatedClaimIds = Array.from(
+      new Set(
+        [...packet.active_claims, ...packet.open_threads].map((claim) => claim.id)
+      )
+    );
+    if (activatedClaimIds.length > 0) {
+      this.touchActivatedClaims(projectId, activatedClaimIds, activationTs);
+    }
+
+    const stampClaim = <T extends RecallPacket["active_claims"][number]>(claim: T): T => ({
+      ...claim,
+      last_activated_at: activationTs,
+    });
+
+    const warnings = Array.from(
+      new Set([...(packet.warnings ?? []), ...(extras.warnings ?? [])])
+    );
+
+    return {
+      ...packet,
+      checkpoint: extras.checkpoint,
+      active_claims: packet.active_claims.map(stampClaim),
+      open_threads: packet.open_threads.map(stampClaim),
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
+  }
+
+  private resolveSnapshotCheckpoint(input: {
+    project_id: string;
+    workspace_id?: string;
+    branch?: string;
+    cwd?: string;
+  }): { checkpoint?: RecallCheckpoint; warnings?: string[] } {
+    const latest = this.getLatestCheckpoint({
+      project_id: input.project_id,
+      workspace_id: input.workspace_id,
+    });
+    if (!latest) return {};
+
+    if (latest.status === "active") {
+      return this.verifyCheckpointForSessionStart(input);
+    }
+
+    return {
+      checkpoint: toRecallCheckpoint(latest, { hideNextAction: true }),
+      warnings: latest.stale_reason ? [latest.stale_reason] : undefined,
+    };
+  }
+
+  private updateCheckpointForCurrentWorkspace(
+    checkpoint: SessionCheckpoint,
+    currentBranchName: string | undefined,
+    cwd: string | undefined,
+    warnings: string[]
+  ): boolean {
+    let hideNextAction = false;
+    let staleReason: string | undefined;
+
+    if (
+      checkpoint.branch &&
+      currentBranchName &&
+      checkpoint.branch !== currentBranchName
+    ) {
+      checkpoint.status = "stale";
+      checkpoint.stale_reason = `checkpoint stale: branch changed (${checkpoint.branch} -> ${currentBranchName})`;
+      this.storage.upsertSessionCheckpoint(checkpoint);
+      warnings.push(checkpoint.stale_reason);
+      return true;
+    }
+
+    const currentHead = currentRepoHead(cwd);
+    const headChanged =
+      Boolean(checkpoint.repo_head && currentHead && checkpoint.repo_head !== currentHead);
+    const changedFiles = verifyCheckpointFileDigests(
+      cwd,
+      checkpoint.hot_files,
+      checkpoint.hot_file_digests
+    );
+
+    if (changedFiles.length > 0) {
+      staleReason = `checkpoint stale: hot files changed (${changedFiles.join(", ")})`;
+      checkpoint.status = "stale";
+      checkpoint.stale_reason = staleReason;
+      this.storage.upsertSessionCheckpoint(checkpoint);
+      warnings.push(staleReason);
+      hideNextAction = true;
+    } else if (headChanged) {
+      warnings.push("checkpoint warning: repository HEAD changed since checkpoint creation");
+    }
+
+    return hideNextAction;
+  }
+
+  private selectCheckpointClaims(
+    projectId: string,
+    scope: SessionBriefInput["scope"]
+  ): Claim[] {
+    const claims = this.storage
+      .listClaims(projectId)
+      .filter((claim) => claim.status === "active")
+      .filter((claim) => {
+        if (!scope) return true;
+        if (scope.repo && claim.scope?.repo && scope.repo !== claim.scope.repo) return false;
+        if (scope.branch && claim.scope?.branch && scope.branch !== claim.scope.branch) return false;
+        if (scope.cwd_prefix && claim.scope?.cwd_prefix) {
+          const left = scope.cwd_prefix;
+          const right = claim.scope.cwd_prefix;
+          const compatible =
+            left === right ||
+            left.startsWith(`${right}/`) ||
+            right.startsWith(`${left}/`);
+          if (!compatible) return false;
+        }
+        return true;
+      });
+
+    return claims.sort((left, right) => {
+      const leftPriority =
+        left.type === "thread" ? 0 : left.type === "decision" ? 1 : 2;
+      const rightPriority =
+        right.type === "thread" ? 0 : right.type === "decision" ? 1 : 2;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      if (right.importance !== left.importance) return right.importance - left.importance;
+      if (right.confidence !== left.confidence) return right.confidence - left.confidence;
+      return right.created_at.localeCompare(left.created_at);
+    });
   }
 
   private applyOutcome(outcome: Outcome): void {

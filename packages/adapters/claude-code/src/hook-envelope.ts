@@ -1,5 +1,5 @@
 import path from "node:path";
-import { type NormalizedEvent, asString } from "@slicenferqin/project-memory-runtime-core";
+import { type NormalizedEvent, asString } from "@slicenfer/project-memory-runtime-core";
 import {
   ClaudeCodeAdapter,
   createClaudeCodeRuntime,
@@ -11,6 +11,7 @@ import {
   type ClaudeCodeRuntimeConfig,
   type ClaudeInjectionResult,
 } from "./adapter.js";
+import { resolveRuntimeLocation } from "./runtime-location.js";
 
 export type ClaudeHookEnvelopeName =
   | "SessionStart"
@@ -143,6 +144,40 @@ export interface ClaudeHookExecutionResult {
   injection?: ClaudeInjectionResult;
   additionalContext?: string | null;
   staleClaimed?: number;
+}
+
+function checkpointSourceForEnvelope(
+  envelope: ClaudeHookEnvelope
+):
+  | { source: "precompact" | "session_end" | "postcompact" | "stop_failure"; summaryHint?: string; blockingHint?: string }
+  | undefined {
+  switch (envelope.hook_event_name) {
+    case "PreCompact":
+      return { source: "precompact" };
+    case "SessionEnd":
+      return {
+        source: "session_end",
+        summaryHint: envelope.reason ? `Claude Code session ended: ${envelope.reason}` : undefined,
+      };
+    case "PostCompact":
+      return {
+        source: "postcompact",
+        summaryHint: asString(envelope.compact_summary) ?? "Context compacted",
+      };
+    case "StopFailure": {
+      const blockingHint =
+        asString(envelope.error_details) ??
+        asString(envelope.last_assistant_message) ??
+        asString(envelope.error);
+      return {
+        source: "stop_failure",
+        summaryHint: blockingHint,
+        blockingHint,
+      };
+    }
+    default:
+      return undefined;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -446,8 +481,35 @@ export function executeClaudeHookEnvelope(
   envelope: ClaudeHookEnvelope,
   options: ClaudeHookExecutionOptions = {}
 ): ClaudeHookExecutionResult {
-  const parsed = parseClaudeHookEnvelope(envelope, options);
-  const runtime = createClaudeCodeRuntime(options);
+  const location = resolveRuntimeLocation({
+    cwd: envelope.cwd,
+    dataDir: options.dataDir,
+    dbPath: options.dbPath,
+    project_id: options.project_id,
+    repo_id: options.repo_id,
+    workspace_id: options.workspace_id,
+    branch: options.branch,
+  });
+
+  const runtimeOptions: ClaudeHookExecutionOptions = {
+    ...options,
+    dataDir: location.dataDir,
+    dbPath: location.dbPath,
+    project_id: location.project_id,
+    repo_id: location.repo_id,
+    workspace_id: location.workspace_id,
+    branch: location.branch,
+  };
+  const parsed = parseClaudeHookEnvelope(envelope, runtimeOptions);
+
+  if (!location.enabled || !location.dataDir || !location.dbPath) {
+    return {
+      context: parsed.context,
+      events: [],
+    };
+  }
+
+  const runtime = createClaudeCodeRuntime(runtimeOptions);
 
   try {
     const adapter = new ClaudeCodeAdapter({
@@ -457,6 +519,14 @@ export function executeClaudeHookEnvelope(
 
     // Record events (skip for query-only hooks like PreToolUse where input is null)
     const events = parsed.input ? adapter.record(parsed.input) : [];
+
+    const checkpointRequest = checkpointSourceForEnvelope(envelope);
+    if (checkpointRequest) {
+      adapter.recordSessionCheckpoint(checkpointRequest.source, {
+        summaryHint: checkpointRequest.summaryHint,
+        blockingHint: checkpointRequest.blockingHint,
+      });
+    }
 
     // Session brief injection (SessionStart only)
     const injection = parsed.shouldInjectSessionBrief

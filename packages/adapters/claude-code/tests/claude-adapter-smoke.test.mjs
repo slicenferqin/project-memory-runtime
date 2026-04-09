@@ -239,6 +239,137 @@ test("claude adapter injects session brief once per unchanged packet", async () 
   secondRuntime.close();
 });
 
+test("claude adapter keeps default outcome writes on the stable contract only", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-stable-outcomes-"));
+  const adapterModule = await import("../dist/index.js");
+
+  const runtime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const adapter = new adapterModule.ClaudeCodeAdapter({
+    runtime,
+    context: {
+      project_id: "github.com/acme/demo",
+      workspace_id: "ws-1",
+      session_id: "session-stable-outcomes",
+      repo_id: "github.com/acme/demo",
+      branch: "main",
+      cwd: tempDir,
+    },
+  });
+
+  adapter.record({
+    hook: "PostToolUseFailure",
+    tool_name: "Bash",
+    tool_input: { command: "pnpm test", cwd: tempDir, branch: "main" },
+    tool_output: {
+      stdout: "auth integration failed",
+      failing_test: "auth integration",
+    },
+    exit_code: 1,
+  });
+
+  adapter.record({
+    hook: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: { command: "pnpm test", cwd: tempDir, branch: "main" },
+    tool_output: {
+      stdout: "all tests passed",
+    },
+    exit_code: 0,
+  });
+
+  const outcomes = runtime.listOutcomes("github.com/acme/demo").map((outcome) => outcome.outcome_type);
+  assert.deepEqual(outcomes, ["test_fail", "test_pass"]);
+
+  runtime.close();
+});
+
+test("claude adapter injects continuation checkpoint and persists bash artifacts", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-checkpoint-"));
+  const worktreeDir = path.join(tempDir, "workspace");
+  fs.mkdirSync(worktreeDir, { recursive: true });
+  const hotFile = path.join(worktreeDir, "src", "auth.ts");
+  fs.mkdirSync(path.dirname(hotFile), { recursive: true });
+  fs.writeFileSync(hotFile, "export const authMode = 'sqlite';\n");
+
+  const adapterModule = await import("../dist/index.js");
+  const runtime = adapterModule.createClaudeCodeRuntime({ dataDir: tempDir });
+  const adapter = new adapterModule.ClaudeCodeAdapter({
+    runtime,
+    context: {
+      project_id: "github.com/acme/demo",
+      workspace_id: "ws-1",
+      session_id: "session-checkpoint",
+      repo_id: "github.com/acme/demo",
+      branch: "main",
+      cwd: worktreeDir,
+    },
+  });
+
+  runtime.getAdminApi().insertClaimRecord({
+    id: "clm-thread",
+    created_at: "2026-03-12T00:00:00.000Z",
+    project_id: "github.com/acme/demo",
+    type: "thread",
+    assertion_kind: "todo",
+    canonical_key: "thread.issue.42",
+    cardinality: "singleton",
+    content: "Refactor auth module",
+    source_event_ids: ["evt-thread"],
+    confidence: 0.9,
+    importance: 0.9,
+    outcome_score: 0,
+    verification_status: "user_confirmed",
+    status: "active",
+    thread_status: "open",
+    scope: {
+      branch: "main",
+      cwd_prefix: worktreeDir,
+      files: [hotFile],
+    },
+  });
+
+  adapter.record({
+    hook: "PostToolUseFailure",
+    tool_name: "Bash",
+    tool_input: { command: "pnpm test", cwd: worktreeDir, branch: "main" },
+    tool_output: {
+      stdout: "auth integration failed",
+      stderr: "Error: auth integration failed",
+      failing_test: "auth integration",
+    },
+    exit_code: 1,
+    metadata: {
+      duration_ms: 42,
+    },
+  });
+
+  adapter.recordSessionCheckpoint("session_end", {
+    summaryHint: "Checkpoint after auth work",
+  });
+
+  const events = runtime.listEvents("github.com/acme/demo");
+  const bashEvent = events.find((event) => event.event_type === "test_result");
+  assert.ok(bashEvent, "bash tool use should create a test_result event");
+  assert.equal(bashEvent.metadata?.command_name, "pnpm test");
+  assert.equal(bashEvent.metadata?.duration_ms, 42);
+  assert.ok(typeof bashEvent.metadata?.artifact_ref === "string");
+  assert.ok(typeof bashEvent.metadata?.stdout_digest === "string");
+  assert.ok(typeof bashEvent.metadata?.stderr_digest === "string");
+  assert.ok(
+    fs.existsSync(path.join(tempDir, bashEvent.metadata?.artifact_ref)),
+    "artifact ref should point to a persisted artifact file"
+  );
+
+  const injection = adapter.injectSessionBrief();
+  assert.ok(injection.packet.checkpoint, "session brief should include checkpoint");
+  assert.ok(injection.text?.includes("Continuation checkpoint:"));
+  assert.ok(injection.text?.includes("Checkpoint after auth work"));
+  assert.ok(injection.packet.checkpoint?.next_action, "checkpoint should expose a next action");
+  assert.ok(injection.text?.includes("Next action:"), "injection text should render the next action");
+
+  runtime.close();
+});
+
 test("claude adapter helper keeps trusted hook capture paths opt-in", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-hook-gate-"));
   const optInTempDir = mkdtempSync(path.join(os.tmpdir(), "pmr-claude-hook-optin-"));

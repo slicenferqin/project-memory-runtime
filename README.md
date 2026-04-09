@@ -19,11 +19,12 @@
 ## 快速上手
 
 ```bash
-# 1. 在任意 git 项目中一键安装（30 秒）
-npx project-memory-runtime init
+# 1. Claude Code：一次性安装到用户级 Claude 配置（推荐）
+pmr install-global
 
-# 2. 启动 Claude Code 会话 → 记忆自动注入
-#    正常工作 — 测试/提交/编辑全部自动捕获
+# 2. 进入任意 git 项目 → Claude Code 会自动接管
+#    新项目默认写入共享全局库
+#    已有 .memory/runtime.sqlite 的老项目继续走本地库
 
 # 3. 新会话看到可信记忆：
 #    decision.persistence.backend: Use SQLite [✓ 3 test passes]
@@ -35,12 +36,37 @@ pmr snapshot
 pmr status
 ```
 
-`init` 命令会自动完成：
-- 推导 project_id（基于 git remote）
-- 创建 `.memory/` 数据目录 + SQLite 数据库
-- 安装 6 个生命周期 hooks 到 `.claude/settings.local.json`
-- 安装 Skill 文件引导 Claude 使用 `pmr` 检索命令
-- 添加 `.memory/` 到 `.gitignore`
+`install-global` 命令只服务 **Claude Code shell hooks**，会自动完成：
+- 写入用户级配置到 `~/.claude/project-memory-runtime/config.json`
+- 安装 12 个托管生命周期 hooks 到 `~/.claude/settings.local.json`
+- 安装全局 Skill 到 `~/.claude/skills/project-memory/`
+- 初始化共享数据目录 `~/.claude/project-memory-runtime/data/`
+
+如果你使用的是 **Claude Agent SDK**，不走这条安装路径，而是在应用代码里接入：
+
+```ts
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { withProjectMemory } from "@slicenfer/project-memory-adapter-claude-agent-sdk";
+
+const stream = query({
+  prompt: "Fix the failing tests in this repo.",
+  options: withProjectMemory({
+    cwd: process.cwd(),
+    settingSources: ["project"],
+    permissionMode: "acceptEdits",
+  }),
+});
+```
+
+说明：
+- SDK 默认不会自动加载磁盘 settings
+- `withProjectMemory()` 不会偷偷追加 `settingSources`
+- 如果你希望保留 `CLAUDE.md` / `.claude/skills` / 项目 settings 语义，需要由应用自己传 `settingSources`
+
+兼容规则：
+- 新 git 仓库默认走共享全局库
+- 检测到已有 `.memory/runtime.sqlite` 的老项目时，继续使用本地库
+- 可通过 `.claude/project-memory.json` 为单个仓库显式 `disabled` 或 `local`
 
 ---
 
@@ -109,12 +135,20 @@ V2 已经把系统收敛为四层：
 4. **Outcome Loop**
    让测试、提交、issue、人工修正等结果反哺记忆质量
 
+当前实现额外补上了一个面向续窗的最小对象：
+
+5. **Session Checkpoint**
+   在 `PreCompact / SessionEnd / PostCompact / StopFailure` 上生成结构化工作态快照，并在新 session 启动时做最小重建校验
+
 ---
 
 ## CLI 命令
 
 ```bash
-pmr init                              # 一键安装（hooks + skill + DB）
+pmr install-global                    # 一次性安装用户级 hooks + skill + 共享 DB
+pmr validate-global                   # 校验全局安装
+pmr uninstall-global                  # 卸载全局 hooks + skill + config
+pmr init                              # 兼容模式：为当前仓库安装本地 hooks + skill + DB
 pmr search "query"                    # 搜索项目记忆
 pmr search --type decision            # 按类型过滤
 pmr search --status active --limit 10 # 按状态过滤
@@ -154,10 +188,11 @@ Timeline:
 ```text
 project-memory-runtime/
 ├── packages/
-│   ├── runtime/              # @slicenferqin/project-memory-runtime-core
+│   ├── runtime/              # @slicenfer/project-memory-runtime-core
 │   ├── cli/                  # project-memory-runtime (CLI: pmr)
 │   └── adapters/
-│       └── claude-code/      # @slicenferqin/project-memory-adapter-claude-code
+│       ├── claude-code/      # @slicenfer/project-memory-adapter-claude-code
+│       └── claude-agent-sdk/ # @slicenfer/project-memory-adapter-claude-agent-sdk
 ├── tools/
 │   ├── memoryctl/            # 开发者管理工具
 │   └── benchmarks/           # 性能基准测试
@@ -173,15 +208,17 @@ project-memory-runtime/
 
 **Phase 2 完成**，包括：
 
-- 一键安装 `npx project-memory-runtime init`
+- 一次性全局安装 `pmr install-global`
+- 共享全局数据路由（显式路径 > repo override > legacy local > global）
 - 5 个 CLI 检索命令（search / explain / snapshot / status / init）
 - Outcome 可视化（session brief 显示 "✓ verified by N test passes"）
 - Stale 检测告警
 - Outcome 时间线（`pmr explain` 展示证据链 + score 变化）
+- Session checkpoint（生成、注入、branch/file digest 级重建校验）
 - Skill 文件引导 Claude 使用 `pmr` 命令
-- 86 个自动化测试（runtime 60 + adapter 17 + memoryctl 3 + CLI 6）
+- 命令观察结构化 metadata（`command_name / duration_ms / touched_files / stdout_digest / stderr_digest / artifact_ref`）
 - SQLite 并发安全（busy_timeout + retry）
-- 性能索引（claims, outcomes, transitions, events）
+- 性能索引（claims, outcomes, transitions, events, checkpoints）
 
 本地验证：
 

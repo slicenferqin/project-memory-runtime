@@ -101,6 +101,12 @@ function parseArgs(argv: string[]): ParsedCliArgs {
         options.timeout_seconds = parsed;
         break;
       }
+      case "target":
+        if (value !== "global" && value !== "local") {
+          fail("--target must be one of: global, local");
+        }
+        options.target = value;
+        break;
       default:
         fail(`unknown option: --${key}`);
     }

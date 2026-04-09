@@ -1,7 +1,19 @@
 import process from "node:process";
-import { createRuntime, isJson, truncate, type CliOptions } from "../shared.js";
+import {
+  createRuntime,
+  isJson,
+  runtimeDisabledMessage,
+  truncate,
+  type CliOptions,
+} from "../shared.js";
 
 export function runExplain(positional: string[], options: CliOptions): void {
+  const disabledMessage = runtimeDisabledMessage(options);
+  if (disabledMessage) {
+    console.log(`Project Memory unavailable: ${disabledMessage}`);
+    return;
+  }
+
   const claimId = positional[0];
   if (!claimId) {
     console.error("Usage: pmr explain <claim-id>");

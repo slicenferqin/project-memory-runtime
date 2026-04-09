@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ClaudeHookExecutionOptions } from "./hook-envelope.js";
+import { resolveGlobalInstallPaths } from "./runtime-location.js";
+
+export type ClaudeHookSettingsTarget = "global" | "local";
 
 export type ClaudeManagedHookEvent =
   | "SessionStart"
@@ -35,6 +38,8 @@ export interface ClaudeHookSettings {
 export interface ClaudeHookSettingsOptions extends ClaudeHookExecutionOptions {
   command?: string;
   timeout_seconds?: number;
+  target?: ClaudeHookSettingsTarget;
+  omit_default_data_dir?: boolean;
 }
 
 export interface ClaudeHookSettingsInstallOptions extends ClaudeHookSettingsOptions {
@@ -45,6 +50,12 @@ export interface ClaudeHookSettingsInstallResult {
   settings_file: string;
   settings: ClaudeHookSettings;
   managed_command: string;
+}
+
+export interface ClaudeHookSettingsUninstallResult {
+  settings_file: string;
+  settings: ClaudeHookSettings;
+  removed_events: ClaudeManagedHookEvent[];
 }
 
 export interface ClaudeHookSettingsValidationResult {
@@ -101,7 +112,11 @@ function maybePushStringArg(args: string[], key: string, value: string | undefin
 
 function buildManagedHookArgs(options: ClaudeHookSettingsOptions): string[] {
   const args: string[] = [];
-  maybePushStringArg(args, "data-dir", options.dataDir ?? DEFAULT_CLAUDE_HOOK_DATA_DIR);
+  if (typeof options.dataDir === "string") {
+    maybePushStringArg(args, "data-dir", options.dataDir);
+  } else if (!options.omit_default_data_dir && options.target !== "global") {
+    maybePushStringArg(args, "data-dir", DEFAULT_CLAUDE_HOOK_DATA_DIR);
+  }
   maybePushStringArg(args, "db-path", options.dbPath);
   maybePushStringArg(args, "project-id", options.project_id);
   maybePushStringArg(args, "repo-id", options.repo_id);
@@ -152,10 +167,22 @@ function normalizeHookEntries(value: unknown): ClaudeHookMatcherConfig[] {
     .filter((entry) => entry.hooks.length > 0);
 }
 
-function resolveSettingsFile(settingsFile?: string): string {
-  return path.resolve(
-    settingsFile ?? path.join(process.cwd(), ".claude", "settings.local.json")
-  );
+function resolveSettingsFile(settingsFile: string): string {
+  return path.resolve(settingsFile);
+}
+
+function defaultSettingsFileForTarget(target: ClaudeHookSettingsTarget = "local"): string {
+  if (target === "global") {
+    return resolveGlobalInstallPaths().settingsFile;
+  }
+  return path.join(process.cwd(), ".claude", "settings.local.json");
+}
+
+function resolveTargetedSettingsFile(
+  settingsFile?: string,
+  target: ClaudeHookSettingsTarget = "local"
+): string {
+  return resolveSettingsFile(settingsFile ?? defaultSettingsFileForTarget(target));
 }
 
 function loadClaudeHookSettings(settingsFile: string): ClaudeHookSettings {
@@ -237,7 +264,7 @@ export function buildClaudeHookSettings(
 export function installClaudeHookSettings(
   options: ClaudeHookSettingsInstallOptions = {}
 ): ClaudeHookSettingsInstallResult {
-  const settingsFile = resolveSettingsFile(options.settings_file);
+  const settingsFile = resolveTargetedSettingsFile(options.settings_file, options.target);
   const settings = loadClaudeHookSettings(settingsFile);
   const generatedSettings = buildClaudeHookSettings(options);
   const currentHooks = isRecord(settings.hooks) ? cloneJson(settings.hooks) : {};
@@ -262,9 +289,9 @@ export function installClaudeHookSettings(
 }
 
 export function validateClaudeHookSettings(
-  options: { settings_file?: string } = {}
+  options: { settings_file?: string; target?: ClaudeHookSettingsTarget } = {}
 ): ClaudeHookSettingsValidationResult {
-  const settingsFile = resolveSettingsFile(options.settings_file);
+  const settingsFile = resolveTargetedSettingsFile(options.settings_file, options.target);
   const settings = loadClaudeHookSettings(settingsFile);
   const hooks = isRecord(settings.hooks) ? settings.hooks : {};
 
@@ -296,5 +323,47 @@ export function validateClaudeHookSettings(
     managed_events: managedEvents,
     missing_events: missingEvents,
     duplicate_events: duplicateEvents,
+  };
+}
+
+export function uninstallClaudeHookSettings(
+  options: { settings_file?: string; target?: ClaudeHookSettingsTarget } = {}
+): ClaudeHookSettingsUninstallResult {
+  const settingsFile = resolveTargetedSettingsFile(options.settings_file, options.target);
+  const settings = loadClaudeHookSettings(settingsFile);
+  const hooks = isRecord(settings.hooks) ? cloneJson(settings.hooks) : {};
+  const removedEvents: ClaudeManagedHookEvent[] = [];
+
+  for (const eventName of Object.keys(MANAGED_HOOK_MATCHERS) as ClaudeManagedHookEvent[]) {
+    const normalizedEntries = normalizeHookEntries(hooks[eventName])
+      .map((entry) => ({
+        ...entry,
+        hooks: entry.hooks.filter((hook) => !isManagedCommandHook(hook)),
+      }))
+      .filter((entry) => entry.hooks.length > 0);
+
+    const managedCount = normalizeHookEntries(hooks[eventName])
+      .flatMap((entry) => entry.hooks)
+      .filter((hook) => isManagedCommandHook(hook)).length;
+
+    if (managedCount > 0) {
+      removedEvents.push(eventName);
+    }
+
+    if (normalizedEntries.length > 0) {
+      hooks[eventName] = normalizedEntries;
+    } else {
+      delete hooks[eventName];
+    }
+  }
+
+  settings.hooks = hooks;
+  fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+  fs.writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
+
+  return {
+    settings_file: settingsFile,
+    settings,
+    removed_events: removedEvents,
   };
 }

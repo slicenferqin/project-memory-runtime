@@ -2,10 +2,11 @@
 
 Core runtime package for Phase 1.
 
-Milestone 1 scope:
+Current scope:
 
 - SQLite initialization
 - migration runner
 - idempotent event writes
-- minimal claim and outcome persistence
+- claim / outcome / activation persistence
+- session checkpoint persistence and rehydration verification
 - runtime health and storage stats

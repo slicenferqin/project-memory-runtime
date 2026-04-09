@@ -9,7 +9,14 @@ import type {
   Outcome,
   OutcomeType,
   ResolutionRule,
+  SessionCheckpoint,
+  SessionCheckpointStatus,
   VerificationStatus,
+} from "./types.js";
+import {
+  SESSION_CHECKPOINT_STATUSES,
+  SESSION_CHECKPOINT_SOURCES,
+  STABLE_OUTCOME_TYPES,
 } from "./types.js";
 
 const CLAIM_TYPES = new Set(["fact", "decision", "thread"]);
@@ -32,19 +39,9 @@ const VERIFICATION_STATUSES = new Set([
 ]);
 const CLAIM_STATUSES = new Set(["active", "stale", "superseded", "archived"]);
 const THREAD_STATUSES = new Set(["open", "resolved", "blocked"]);
-const OUTCOME_TYPES = new Set([
-  "test_pass",
-  "test_fail",
-  "build_pass",
-  "build_fail",
-  "commit_kept",
-  "commit_reverted",
-  "issue_closed",
-  "issue_reopened",
-  "human_kept",
-  "human_corrected",
-  "manual_override",
-]);
+const OUTCOME_TYPES = new Set(STABLE_OUTCOME_TYPES);
+const SESSION_CHECKPOINT_STATUS_VALUES = new Set(SESSION_CHECKPOINT_STATUSES);
+const SESSION_CHECKPOINT_SOURCE_VALUES = new Set(SESSION_CHECKPOINT_SOURCES);
 const EVENT_TYPES = new Set([
   "user_message",
   "agent_message",
@@ -273,6 +270,52 @@ export function validateOutcomeRecord(outcome: Outcome): void {
   assertRange(outcome.strength, 0, 1, "outcome.strength");
   if (!Array.isArray(outcome.related_event_ids) || outcome.related_event_ids.length === 0) {
     throw new RuntimeInvariantError("outcome.related_event_ids must contain at least one event id");
+  }
+}
+
+export function assertSessionCheckpointStatus(
+  status: string
+): asserts status is SessionCheckpointStatus {
+  assertEnumValue<SessionCheckpointStatus>(
+    status,
+    SESSION_CHECKPOINT_STATUS_VALUES,
+    "session_checkpoint.status"
+  );
+}
+
+export function validateSessionCheckpointRecord(checkpoint: SessionCheckpoint): void {
+  assertSessionCheckpointStatus(checkpoint.status);
+  assertEnumValue(
+    checkpoint.source,
+    SESSION_CHECKPOINT_SOURCE_VALUES,
+    "session_checkpoint.source"
+  );
+  if (!checkpoint.project_id) {
+    throw new RuntimeInvariantError("session_checkpoint.project_id is required");
+  }
+  if (!checkpoint.session_id) {
+    throw new RuntimeInvariantError("session_checkpoint.session_id is required");
+  }
+  if (!checkpoint.summary) {
+    throw new RuntimeInvariantError("session_checkpoint.summary is required");
+  }
+  if (!checkpoint.packet_hash) {
+    throw new RuntimeInvariantError("session_checkpoint.packet_hash is required");
+  }
+  if (!Array.isArray(checkpoint.hot_claim_ids)) {
+    throw new RuntimeInvariantError("session_checkpoint.hot_claim_ids must be an array");
+  }
+  if (!Array.isArray(checkpoint.hot_files)) {
+    throw new RuntimeInvariantError("session_checkpoint.hot_files must be an array");
+  }
+  if (!Array.isArray(checkpoint.evidence_refs)) {
+    throw new RuntimeInvariantError("session_checkpoint.evidence_refs must be an array");
+  }
+  if (
+    checkpoint.hot_file_digests &&
+    typeof checkpoint.hot_file_digests !== "object"
+  ) {
+    throw new RuntimeInvariantError("session_checkpoint.hot_file_digests must be an object");
   }
 }
 

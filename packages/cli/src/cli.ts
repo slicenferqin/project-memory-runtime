@@ -2,10 +2,13 @@
 
 import process from "node:process";
 import { runInit } from "./commands/init.js";
+import { runInstallGlobal } from "./commands/install-global.js";
 import { runSearch } from "./commands/search.js";
 import { runExplain } from "./commands/explain.js";
 import { runSnapshot } from "./commands/snapshot.js";
 import { runStatus } from "./commands/status.js";
+import { runValidateGlobal } from "./commands/validate-global.js";
+import { runUninstallGlobal } from "./commands/uninstall-global.js";
 
 function parseArgs(argv: string[]): { positional: string[]; options: Record<string, string | boolean | string[]> } {
   const positional: string[] = [];
@@ -40,6 +43,9 @@ function usage(): string {
     "",
     "Commands:",
     "  init                          Initialize project memory in the current repository",
+    "  install-global                Install global Claude hooks, skill, and shared storage",
+    "  validate-global               Validate global Project Memory installation",
+    "  uninstall-global              Remove global Project Memory hooks, skill, and config",
     '  search "<query>"              Search project memory for relevant claims',
     "  explain <claim-id>            Trace a claim to its evidence and outcomes",
     "  snapshot                      Full project memory overview",
@@ -75,6 +81,15 @@ async function main(): Promise<void> {
   switch (command) {
     case "init":
       await runInit(options);
+      break;
+    case "install-global":
+      await runInstallGlobal(options);
+      break;
+    case "validate-global":
+      await runValidateGlobal();
+      break;
+    case "uninstall-global":
+      await runUninstallGlobal();
       break;
     case "search":
       runSearch(positional.slice(1), options);

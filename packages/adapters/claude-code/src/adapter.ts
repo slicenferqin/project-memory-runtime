@@ -11,10 +11,11 @@ import {
   type ProjectMemoryRuntime,
   type RecallPacket,
   type RuntimeConfig,
+  type SessionCheckpointSource,
   nowIso,
   asString,
-} from "@slicenferqin/project-memory-runtime-core";
-import { ProjectMemoryRuntime as Runtime } from "@slicenferqin/project-memory-runtime-core";
+} from "@slicenfer/project-memory-runtime-core";
+import { ProjectMemoryRuntime as Runtime } from "@slicenfer/project-memory-runtime-core";
 import { detectWorkspace, type WorkspaceInfo } from "./workspace.js";
 
 export type ClaudeHookName =
@@ -93,6 +94,51 @@ function hashValue(value: unknown): string {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function truncate(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars - 3)}...`;
+}
+
+function normalizeInlineText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function artifactRefForPayload(dataDir: string, payload: unknown): string {
+  const serialized = JSON.stringify(payload, null, 2);
+  const digest = sha256(serialized);
+  const artifactsDir = path.join(dataDir, "artifacts");
+  fs.mkdirSync(artifactsDir, { recursive: true });
+  const artifactPath = path.join(artifactsDir, `${digest}.json`);
+  if (!fs.existsSync(artifactPath)) {
+    fs.writeFileSync(artifactPath, `${serialized}\n`);
+  }
+  return path.relative(dataDir, artifactPath);
+}
+
+function summarizeBashObservation(input: {
+  command: string;
+  eventType: NormalizedEvent["event_type"];
+  exitCode: number;
+  toolOutput?: Record<string, unknown>;
+}): string {
+  const failingTest = asString(input.toolOutput?.failing_test);
+  const summaryText =
+    asString(input.toolOutput?.summary) ??
+    asString(input.toolOutput?.stderr) ??
+    asString(input.toolOutput?.stdout);
+  const outcomeLabel = input.exitCode === 0 ? "succeeded" : "failed";
+
+  if (input.eventType === "test_result" && failingTest) {
+    return `Command ${outcomeLabel}: ${input.command} | failing test: ${failingTest}`;
+  }
+
+  if (summaryText) {
+    return `Command ${outcomeLabel}: ${input.command} | ${truncate(normalizeInlineText(summaryText), 220)}`;
+  }
+
+  return `Command ${outcomeLabel}: ${input.command}`;
 }
 
 function buildBaseScope(context: ClaudeAdapterContext): EventScope | undefined {
@@ -206,7 +252,8 @@ function classifyBashCommand(
 
 function normalizePostToolUse(
   context: ClaudeAdapterContext,
-  payload: ClaudePostToolUsePayload
+  payload: ClaudePostToolUsePayload,
+  artifactsDataDir: string
 ): NormalizedEvent[] {
   const toolName = payload.tool_name.toLowerCase();
   const ts = payload.ts ?? nowIso();
@@ -214,17 +261,19 @@ function normalizePostToolUse(
 
   if (toolName === "bash") {
     const command = asString(payload.tool_input?.command) ?? asString(payload.tool_input?.cmd) ?? "bash";
-    const content =
-      asString(payload.tool_output?.stdout) ??
-      asString(payload.tool_output?.summary) ??
-      command;
     const exitCode =
       typeof payload.exit_code === "number"
         ? payload.exit_code
         : payload.success === false
           ? 1
           : 0;
-    const eventType = classifyBashCommand(command, exitCode, content);
+    const eventType = classifyBashCommand(
+      command,
+      exitCode,
+      asString(payload.tool_output?.stdout) ??
+        asString(payload.tool_output?.summary) ??
+        command
+    );
     const scope = buildToolObservationScope(context, {
       branch: asString(payload.tool_input?.branch),
       cwd: asString(payload.tool_input?.cwd),
@@ -234,6 +283,28 @@ function normalizePostToolUse(
           ? (payload.tool_input.files as string[])
           : undefined,
     });
+    const artifactRef = artifactRefForPayload(
+      artifactsDataDir,
+      {
+        hook: payload.hook,
+        tool_name: payload.tool_name,
+        tool_input: payload.tool_input,
+        tool_output: payload.tool_output,
+        metadata: payload.metadata,
+        ts,
+      }
+    );
+    const content = summarizeBashObservation({
+      command,
+      eventType,
+      exitCode,
+      toolOutput: payload.tool_output,
+    });
+    const touchedFiles =
+      Array.isArray(payload.tool_output?.touched_files) &&
+      payload.tool_output.touched_files.every((value) => typeof value === "string")
+        ? (payload.tool_output.touched_files as string[])
+        : scope?.files;
 
     events.push({
       ...eventBase(context, {
@@ -246,7 +317,21 @@ function normalizePostToolUse(
       scope,
       metadata: {
         command,
+        command_name: command,
         exit_code: exitCode,
+        duration_ms:
+          typeof payload.metadata?.duration_ms === "number"
+            ? payload.metadata.duration_ms
+            : undefined,
+        touched_files: touchedFiles,
+        stdout_digest: asString(payload.tool_output?.stdout)
+          ? sha256(asString(payload.tool_output?.stdout)!)
+          : undefined,
+        stderr_digest: asString(payload.tool_output?.stderr)
+          ? sha256(asString(payload.tool_output?.stderr)!)
+          : undefined,
+        artifact_ref: artifactRef,
+        build_command: eventType === "build_result" ? command : undefined,
         failing_test: asString(payload.tool_output?.failing_test),
         ...(payload.metadata ?? {}),
       },
@@ -354,6 +439,20 @@ function formatInjection(packet: RecallPacket): string {
   const lines: string[] = [];
   lines.push("Project Memory");
   lines.push(packet.brief);
+  if (packet.checkpoint) {
+    lines.push("");
+    lines.push("Continuation checkpoint:");
+    lines.push(`- Summary: ${packet.checkpoint.summary}`);
+    if (packet.checkpoint.current_goal) {
+      lines.push(`- Current goal: ${packet.checkpoint.current_goal}`);
+    }
+    if (packet.checkpoint.next_action) {
+      lines.push(`- Next action: ${packet.checkpoint.next_action}`);
+    }
+    if (packet.checkpoint.blocking_reason) {
+      lines.push(`- Blocking: ${packet.checkpoint.blocking_reason}`);
+    }
+  }
   if (packet.active_claims.length > 0) {
     lines.push("");
     lines.push("Active claims:");
@@ -517,7 +616,7 @@ export class ClaudeCodeAdapter {
   capture(input: ClaudeAdapterInput): NormalizedEvent[] {
     if ("hook" in input) {
       if (input.hook === "PostToolUse" || input.hook === "PostToolUseFailure") {
-        return normalizePostToolUse(this.context, input);
+        return normalizePostToolUse(this.context, input, this.runtime.getPaths().dataDir);
       }
       return normalizeLifecycleEvent(this.context, input as ClaudeSessionLifecyclePayload);
     }
@@ -537,109 +636,26 @@ export class ClaudeCodeAdapter {
       this.runtime.recordEvent(event);
     }
 
-    // Auto-trigger outcomes based on event patterns
-    this.detectAndRecordOutcomes(events, input);
-
     return events;
   }
 
-  private detectAndRecordOutcomes(events: NormalizedEvent[], input: ClaudeAdapterInput): void {
-    // Detect test fail→pass pattern (human_approved)
-    if ("hook" in input && (input.hook === "PostToolUse" || input.hook === "PostToolUseFailure")) {
-      const testEvent = events.find(e => e.event_type === "test_result");
-      if (testEvent && testEvent.metadata?.exit_code === 0) {
-        // Check if there was a recent test failure for the same test
-        const recentEvents = this.runtime.listEvents(this.context.project_id);
-        const recentFailure = recentEvents
-          .filter(e => e.event_type === "test_result" && e.metadata?.exit_code !== 0)
-          .find(e => {
-            const failTime = new Date(e.ts).getTime();
-            const passTime = new Date(testEvent.ts).getTime();
-            return passTime - failTime < 3600000 && passTime > failTime; // within 1 hour
-          });
+  recordSessionCheckpoint(
+    source: SessionCheckpointSource,
+    hints: { summaryHint?: string; blockingHint?: string } = {}
+  ) {
+    if (!this.context.session_id) return undefined;
 
-        if (recentFailure) {
-          // Find claims related to the test failure
-          const claims = this.runtime.listClaims(this.context.project_id);
-          const relatedClaims = claims.filter(c =>
-            c.source_event_ids.includes(recentFailure.id) && c.type === "thread"
-          );
-
-          if (relatedClaims.length > 0) {
-            this.runtime.recordOutcome({
-              project_id: this.context.project_id,
-              related_event_ids: [recentFailure.id, testEvent.id],
-              related_claim_ids: relatedClaims.map(c => c.id),
-              outcome_type: "human_approved",
-              strength: 0.8,
-              notes: "Test fixed: failure resolved",
-            });
-          }
-        }
-      }
-    }
-
-    // Detect negative feedback in user messages (human_rejected)
-    if ("kind" in input && input.kind === "user_message") {
-      const content = input.content.toLowerCase();
-      const negativePatterns = [
-        /不对|错了|不行|不好|有问题/,
-        /wrong|incorrect|bad|issue|problem|doesn't work/,
-        /换个|重新|再试/,
-        /revert|undo|rollback/
-      ];
-
-      if (negativePatterns.some(p => p.test(content))) {
-        // Find recent claims from this session
-        const claims = this.runtime.listClaims(this.context.project_id);
-        const recentClaims = claims.filter(c => {
-          if (!c.last_activated_at) return false;
-          const claimTime = new Date(c.last_activated_at).getTime();
-          const now = Date.now();
-          return now - claimTime < 600000; // within 10 minutes
-        });
-
-        if (recentClaims.length > 0) {
-          const userEvent = events[0];
-          if (userEvent) {
-            this.runtime.recordOutcome({
-              project_id: this.context.project_id,
-              related_event_ids: [userEvent.id],
-              related_claim_ids: recentClaims.slice(0, 3).map(c => c.id),
-              outcome_type: "human_rejected",
-              strength: 0.6,
-              notes: "User expressed dissatisfaction",
-            });
-          }
-        }
-      }
-    }
-
-    // Detect claim supersession (claim_superseded)
-    const claims = this.runtime.listClaims(this.context.project_id);
-    for (const event of events) {
-      const newClaim = claims.find(c => c.source_event_ids.includes(event.id));
-
-      if (newClaim?.canonical_key && newClaim.type === "decision") {
-        const supersededClaim = claims.find(c =>
-          c.id !== newClaim.id &&
-          c.canonical_key === newClaim.canonical_key &&
-          c.type === "decision" &&
-          new Date(c.created_at).getTime() < new Date(newClaim.created_at).getTime()
-        );
-
-        if (supersededClaim) {
-          this.runtime.recordOutcome({
-            project_id: this.context.project_id,
-            related_event_ids: [event.id],
-            related_claim_ids: [supersededClaim.id],
-            outcome_type: "claim_superseded",
-            strength: 0.9,
-            notes: `Superseded by newer decision: ${newClaim.id}`,
-          });
-        }
-      }
-    }
+    return this.runtime.recordSessionCheckpoint({
+      project_id: this.context.project_id,
+      session_id: this.context.session_id,
+      workspace_id: this.context.workspace_id,
+      agent_id: this.context.agent_id ?? "claude-code",
+      scope: buildRecallScope(this.context),
+      cwd: this.context.cwd,
+      source,
+      summary_hint: hints.summaryHint,
+      blocking_hint: hints.blockingHint,
+    });
   }
 
   injectSessionBrief(): ClaudeInjectionResult {
@@ -649,12 +665,23 @@ export class ClaudeCodeAdapter {
       workspace_id: this.context.workspace_id,
       agent_id: this.context.agent_id ?? "claude-code",
       scope: buildRecallScope(this.context),
+      cwd: this.context.cwd,
     });
 
     const packetHash = hashValue({
       brief: packet.brief,
+      checkpoint: packet.checkpoint
+        ? {
+            id: packet.checkpoint.id,
+            status: packet.checkpoint.status,
+            summary: packet.checkpoint.summary,
+            current_goal: packet.checkpoint.current_goal,
+            next_action: packet.checkpoint.next_action,
+          }
+        : null,
       active_claims: packet.active_claims.map((claim) => claim.id),
       open_threads: packet.open_threads.map((claim) => claim.id),
+      warnings: packet.warnings ?? [],
     });
     const sessionKey = buildSessionMarkerKey(this.context);
     const markerPath = path.join(

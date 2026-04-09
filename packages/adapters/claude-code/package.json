@@ -1,6 +1,6 @@
 {
-  "name": "@slicenferqin/project-memory-adapter-claude-code",
-  "version": "0.2.0",
+  "name": "@slicenfer/project-memory-adapter-claude-code",
+  "version": "0.3.0",
   "description": "Claude Code adapter for Project Memory Runtime — hooks, event normalization, and session brief injection",
   "license": "GPL-3.0-only",
   "repository": {
@@ -34,13 +34,13 @@
   ],
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.json",
-    "cli": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm run build && node ./dist/cli.js",
+    "cli": "pnpm --filter @slicenfer/project-memory-runtime-core build && pnpm run build && node ./dist/cli.js",
     "clean": "rm -rf dist",
-    "test": "pnpm --filter @slicenferqin/project-memory-runtime-core build && pnpm run build && node --test tests/*.test.mjs",
+    "test": "pnpm --filter @slicenfer/project-memory-runtime-core build && pnpm run build && node --test tests/*.test.mjs",
     "typecheck": "pnpm exec tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@slicenferqin/project-memory-runtime-core": "workspace:*"
+    "@slicenfer/project-memory-runtime-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
