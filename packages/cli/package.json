@@ -1,6 +1,6 @@
 {
   "name": "project-memory-runtime",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "CLI for Project Memory Runtime — evidence-backed lifecycle memory for AI coding agents",
   "license": "GPL-3.0-only",
   "repository": {

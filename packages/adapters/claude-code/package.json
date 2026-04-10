@@ -1,6 +1,6 @@
 {
   "name": "@slicenfer/project-memory-adapter-claude-code",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Claude Code adapter for Project Memory Runtime — hooks, event normalization, and session brief injection",
   "license": "GPL-3.0-only",
   "repository": {

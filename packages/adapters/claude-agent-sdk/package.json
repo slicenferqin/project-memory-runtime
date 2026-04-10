@@ -1,6 +1,6 @@
 {
   "name": "@slicenfer/project-memory-adapter-claude-agent-sdk",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Claude Agent SDK adapter for Project Memory Runtime — in-process hook bridge and options wrapper",
   "license": "GPL-3.0-only",
   "repository": {
