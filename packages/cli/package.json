@@ -32,13 +32,15 @@
   "files": [
     "dist",
     "assets",
+    "postinstall.cjs",
     "README.md"
   ],
   "scripts": {
     "build": "pnpm --filter @slicenfer/project-memory-runtime-core build && pnpm --filter @slicenfer/project-memory-adapter-claude-code build && pnpm exec tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "test": "pnpm run build && node --test tests/*.test.mjs",
-    "typecheck": "pnpm --filter @slicenfer/project-memory-runtime-core build && pnpm --filter @slicenfer/project-memory-adapter-claude-code build && pnpm exec tsc -p tsconfig.json --noEmit"
+    "typecheck": "pnpm --filter @slicenfer/project-memory-runtime-core build && pnpm --filter @slicenfer/project-memory-adapter-claude-code build && pnpm exec tsc -p tsconfig.json --noEmit",
+    "postinstall": "node ./postinstall.cjs"
   },
   "dependencies": {
     "@slicenfer/project-memory-runtime-core": "workspace:*",

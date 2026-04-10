@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const CLI_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "cli.js");
+const POSTINSTALL_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "postinstall.js");
 const ADAPTER_HOOK_ENVELOPE_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../adapters/claude-code/dist/hook-envelope.js"
@@ -24,6 +25,30 @@ function runCli(args, cwd, env = {}) {
   return execFileSync("node", [CLI_PATH, ...args], {
     cwd,
     env: { ...process.env, ...env },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 15000,
+  });
+}
+
+/**
+ * Run dist/postinstall.js with a fully-scrubbed env. We explicitly strip
+ * `npm_config_global` and `CI`/`CONTINUOUS_INTEGRATION` inherited from the
+ * parent process so the test decides precisely which env vars are visible.
+ *
+ * Returns a `spawnSync`-style result so tests can inspect `status`,
+ * `stdout`, `stderr` without throwing on non-zero exit codes.
+ */
+function runPostinstall(cwd, env = {}) {
+  const scrubbed = { ...process.env };
+  delete scrubbed.npm_config_global;
+  delete scrubbed.CI;
+  delete scrubbed.CONTINUOUS_INTEGRATION;
+  delete scrubbed.BUILD_NUMBER;
+  delete scrubbed.TF_BUILD;
+  return spawnSync("node", [POSTINSTALL_PATH], {
+    cwd,
+    env: { ...scrubbed, ...env },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 15000,
@@ -494,6 +519,90 @@ test("pmr --help shows usage information", () => {
     assert.ok(output.includes("explain"), "should mention explain command");
     assert.ok(output.includes("snapshot"), "should mention snapshot command");
     assert.ok(output.includes("status"), "should mention status command");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// postinstall auto-configuration tests
+// ---------------------------------------------------------------------------
+
+test("postinstall configures global hooks when npm_config_global=true", () => {
+  const tmp = makeTempDir();
+  const claudeHome = path.join(tmp, "claude-home");
+  try {
+    const result = runPostinstall(tmp, {
+      npm_config_global: "true",
+      PMR_CLAUDE_HOME: claudeHome,
+    });
+    assert.equal(result.status, 0, "postinstall should exit 0");
+
+    const settingsPath = path.join(claudeHome, "settings.local.json");
+    assert.ok(fs.existsSync(settingsPath), "settings.local.json should be created");
+    const raw = fs.readFileSync(settingsPath, "utf8");
+    assert.ok(
+      raw.includes("project-memory-claude-hook"),
+      "hook command should be 'project-memory-claude-hook'"
+    );
+
+    const settings = JSON.parse(raw);
+    assert.ok(settings.hooks, "settings should contain hooks");
+    assert.ok(settings.hooks.SessionStart, "should have SessionStart hook");
+    assert.ok(settings.hooks.PostToolUse, "should have PostToolUse hook");
+    assert.ok(settings.hooks.Stop, "should have Stop hook");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("postinstall is a no-op without npm_config_global", () => {
+  const tmp = makeTempDir();
+  const claudeHome = path.join(tmp, "claude-home");
+  try {
+    const result = runPostinstall(tmp, {
+      PMR_CLAUDE_HOME: claudeHome,
+      // npm_config_global intentionally omitted
+    });
+    assert.equal(result.status, 0, "postinstall should exit 0");
+
+    const settingsPath = path.join(claudeHome, "settings.local.json");
+    assert.ok(!fs.existsSync(settingsPath), "settings.local.json should NOT be created");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("postinstall is a no-op in CI environment", () => {
+  const tmp = makeTempDir();
+  const claudeHome = path.join(tmp, "claude-home");
+  try {
+    const result = runPostinstall(tmp, {
+      npm_config_global: "true",
+      CI: "true",
+      PMR_CLAUDE_HOME: claudeHome,
+    });
+    assert.equal(result.status, 0, "postinstall should exit 0");
+
+    const settingsPath = path.join(claudeHome, "settings.local.json");
+    assert.ok(!fs.existsSync(settingsPath), "settings.local.json should NOT be created in CI");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("postinstall exits 0 even when setup fails", () => {
+  const tmp = makeTempDir();
+  // Point to a non-writable path to force an error inside runInstallGlobal().
+  // On macOS / Linux, /dev/null as a dir target will fail when trying to
+  // mkdirSync inside it.
+  const claudeHome = "/dev/null/impossible-path";
+  try {
+    const result = runPostinstall(tmp, {
+      npm_config_global: "true",
+      PMR_CLAUDE_HOME: claudeHome,
+    });
+    assert.equal(result.status, 0, "postinstall must always exit 0 even on failure");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
